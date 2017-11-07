@@ -6,11 +6,13 @@ import execo
 import execo_g5k as g5k
 
 
-def reserve_machines(cluster, nb_machines):
-    if cluster:
-        submission = g5k.OarSubmission(resources="{{cluster='{}'}}/switch=1/nodes={}".format(cluster, nb_machines))
+def reserve_machines(args):
+    if args.cluster:
+        submission = g5k.OarSubmission(resources="{{cluster='{}'}}/switch=1/nodes={}".format(args.cluster, args.nb_machines),
+                                       walltime=args.walltime)
     else:
-        submission = g5k.OarSubmission(resources="switch=1/nodes={}".format(nb_machines))
+        submission = g5k.OarSubmission(resources="switch=1/nodes={}".format(args.nb_machines),
+                                       walltime=args.walltime)
     [(jobid, site)] = g5k.oarsub([(submission , None)])
     return (jobid, site)
 
@@ -49,11 +51,13 @@ if __name__ == '__main__':
                         help='Number of VM to spawn on each physical machine')
     parser.add_argument('--memory', '-m', type=int, default=2048,
                         help='Memory in MB to allocate to each VM')
+    parser.add_argument('--walltime', '-t', type=int,
+                        help='How much time the reservations should last (in seconds)')
     args = parser.parse_args()
     if args.job_id:
         job = (args.job_id, None)
     else:
-        job = reserve_machines(args.cluster, args.nb_hosts)
+        job = reserve_machines(args)
     if job[0]:
         try:
             prepare_machines(job, args.nb_vm)
