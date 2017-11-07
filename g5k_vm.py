@@ -45,10 +45,10 @@ def start_all_vm(job, args, ip_mac_list):
 for mac in {{{{[' '.join(macs) for macs in macs_per_host]}}}}
 do
   iface=$(sudo-g5k create_tap)
-  kvm -m {memory} -smp cores={cores},threads=1,sockets=1 -nographic -localtime -enable-kvm -drive file="{image}",if=virtio,media=disk -net nic,model=virtio,macaddr="$mac" -net tap,ifname="$iface",script=no &
+  kvm -m {memory} -smp cores={cores},threads=1,sockets=1 -nographic -localtime -enable-kvm -drive file="{image}",if=virtio,media=disk -snapshot -net nic,model=virtio,macaddr="$mac" -net tap,ifname="$iface",script=no &
 done
 wait
-    """.format(memory=memory, cores=1, image="todo")
+    """.format(memory=memory, cores=1, image=args.vm_image)
     vm_task = execo.Remote(script, nodes, connection_params=g5k.default_oarsh_oarcp_params, name="VM task")
     return vm_task.start()
 
@@ -62,6 +62,8 @@ if __name__ == '__main__':
                         help='Instead of making a reservation for machines, use an existing OAR job ID')
     parser.add_argument('--subnet-job-id', '-J', type=int,
                         help='Instead of making a reservation for a subnet, use an existing OAR job ID')
+    parser.add_argument('--vm-image', '-i', required=True,
+                        help='Path to the qcow2 VM image to use (on the G5K frontend)')
     parser.add_argument('--nb-vm', '-n', type=int, default=1,
                         help='Number of VM to spawn on each physical machine (default: %(default)s)')
     parser.add_argument('--memory', '-m', type=int, default=2048,
