@@ -52,6 +52,18 @@ wait
     vm_task = execo.Remote(script, nodes, connection_params=g5k.default_oarsh_oarcp_params, name="VM task")
     return vm_task.start()
 
+def run_experiment(job, subnet_job, args):
+    (ip_mac_list, subnet_params) = g5k.get_oar_job_subnets(*subnet_job)
+    vm_subnet = subnet_params['ip_prefix'] # Use this to add a route on the server
+    print("Subnet reserved: prefix is {}".format(vm_subnet))
+    prepare_machines(job, args.nb_vm)
+    task = start_all_vm(job, args, ip_mac_list)
+    print("Started all VMs, waiting for them to terminate.")
+    task.wait()
+    print(execo.Report([task]).to_string())
+    for s in task.processes:
+        print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Deploy VMs on grid5000, to perform experiments')
     parser.add_argument('--cluster', '-c',
@@ -71,29 +83,15 @@ if __name__ == '__main__':
     parser.add_argument('--walltime', '-t', type=int,
                         help='How much time the reservations should last, in seconds')
     args = parser.parse_args()
-    if args.subnet_job_id:
-        subnet_job = (args.subnet_job_id, None)
-    else:
-        subnet_job = reserve_subnet(args)
+    subnet_job = (args.subnet_job_id, None) if args.subnet_job_id else reserve_subnet(args)
     if not subnet_job[0]:
         print("Can't reserve subnet", file=sys.stderr)
         exit(1)
-    (ip_mac_list, subnet_params) = g5k.get_oar_job_subnets(*subnet_job)
-    vm_subnet = subnet_params['ip_prefix'] # Use this to add a route on the server
-    print("Subnet reserved: prefix is {}".format(vm_subnet))
-    if args.job_id:
-        job = (args.job_id, None)
-    else:
-        job = reserve_machines(args)
-    if job[0]:
-        try:
-            prepare_machines(job, args.nb_vm)
-            task = start_all_vm(job, args, ip_mac_list)
-            print("Started all VMs, waiting for them to terminate.")
-            task.wait()
-            print(execo.Report([task]).to_string())
-            for s in task.processes:
-                print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
-        finally:
-            #g5k.oardel([job, subnet_job])
-            pass
+    job = (args.job_id, None) if args.job_id else reserve_machines(args)
+    if not job[0]:
+        print("Can't reserve machines", file=sys.stderr)
+        exit(1)
+    try:
+        run_experiment(job, subnet_job, args)
+    finally:
+        g5k.oardel([job, subnet_job])
