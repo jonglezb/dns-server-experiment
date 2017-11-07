@@ -8,10 +8,10 @@ import execo_g5k as g5k
 
 def reserve_machines(args):
     if args.cluster:
-        submission = g5k.OarSubmission(resources="{{cluster='{}'}}/switch=1/nodes={}".format(args.cluster, args.nb_machines),
+        submission = g5k.OarSubmission(resources="{{cluster='{}'}}/switch=1/nodes={}".format(args.cluster, args.nb_hosts),
                                        walltime=args.walltime)
     else:
-        submission = g5k.OarSubmission(resources="switch=1/nodes={}".format(args.nb_machines),
+        submission = g5k.OarSubmission(resources="switch=1/nodes={}".format(args.nb_hosts),
                                        walltime=args.walltime)
     [(jobid, site)] = g5k.oarsub([(submission , None)])
     return (jobid, site)
