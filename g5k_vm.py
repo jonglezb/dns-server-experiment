@@ -47,7 +47,10 @@ class DNSServerExperiment(engine.Engine):
         # MAC and IP addresses assigned to VM
         self.vm_macs = []
         self.vm_ips = []
-        # self.vm = [] TODO
+        # List of VM, as Host instances
+        self.vm = []
+        # Process that runs all VMs, as a "Remote" instance
+        self.vm_process = None
 
     def reserve_subnet(self):
         # Existing job
@@ -118,6 +121,14 @@ wait
         vm_task = execo.Remote(script, self.vm_hosts, connection_params=g5k.default_oarsh_oarcp_params, name="Run VM on all hosts")
         return vm_task.start()
 
+    def prepare_vm(self):
+        self.vm = [execo.Host(ip, user='root') for ip in self.vm_ips]
+        task = execo.Remote("date", self.vm, name="Test VM reachability").run()
+        print(execo.Report([task]).to_string())
+        for s in task.processes:
+            print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
+        return task
+
     def run(self):
         try:
             self.reserve_subnet()
@@ -129,6 +140,7 @@ wait
             self.prepare_machines()
             logger.debug("Prepared physical machines")
             self.vm_process = self.start_all_vm()
+            self.prepare_vm()
             logger.info("Started all VMs, waiting for them to terminate.")
             self.vm_process.wait()
             print(execo.Report([self.vm_process]).to_string())
