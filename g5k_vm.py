@@ -77,14 +77,12 @@ class DNSServerExperiment(engine.Engine):
         self.machines_job = (jobid, site)
 
     def prepare_subnet(self):
-        g5k.wait_oar_job_start(*self.subnet_job)
         # subnet_params is a dict: http://execo.gforge.inria.fr/doc/latest-stable/execo_g5k.html#get-oar-job-subnets
         (ip_mac_list, subnet_params) = g5k.get_oar_job_subnets(*self.subnet_job)
         self.subnet = subnet_params['ip_prefix']
         self.subnet_ip_mac = ip_mac_list
 
     def prepare_machines(self):
-        g5k.wait_oar_job_start(*self.machines_job)
         nodes = g5k.get_oar_job_nodes(*self.machines_job)
         # Split machines into one server, and several VM hosts
         self.server = nodes[0]
@@ -122,16 +120,19 @@ wait
 
     def run(self):
         try:
-            self.reserve_machines()
             self.reserve_subnet()
+            self.reserve_machines()
+            g5k.wait_oar_job_start(*self.subnet_job)
             self.prepare_subnet()
+            logger.debug("Prepared subnet")
+            g5k.wait_oar_job_start(*self.machines_job)
             self.prepare_machines()
-            vm_task = self.start_all_vm()
-            #self.prepare_vm()
+            logger.debug("Prepared physical machines")
+            self.vm_process = self.start_all_vm()
             logger.info("Started all VMs, waiting for them to terminate.")
-            vm_task.wait()
-            print(execo.Report([task]).to_string())
-            for s in task.processes:
+            self.vm_process.wait()
+            print(execo.Report([self.vm_process]).to_string())
+            for s in self.vm_process.processes:
                 print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
         finally:
             #g5k.oardel([job, subnet_job])
