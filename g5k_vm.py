@@ -91,9 +91,9 @@ class DNSServerExperiment(engine.Engine):
         self.server = nodes[0]
         self.vm_hosts = nodes[1:]
         # Avoid conntrack on all machines
-        execo.Remote("sudo-g5k iptables -t raw -A PREROUTING -p tcp -j NOTRACK; sudo-g5k iptables -t raw -A OUTPUT -p tcp -j NOTRACK",
-                     nodes, connection_params=g5k.default_oarsh_oarcp_params).run()
-        # TODO: configure routing on the server
+        task = execo.Remote("sudo-g5k iptables -t raw -A PREROUTING -p tcp -j NOTRACK; sudo-g5k iptables -t raw -A OUTPUT -p tcp -j NOTRACK",
+                            nodes, connection_params=g5k.default_oarsh_oarcp_params).start()
+        return task
 
     def start_all_vm(self):
         """Starts VM on reserved machines, and returns the associated task
@@ -121,12 +121,42 @@ wait
         vm_task = execo.Remote(script, self.vm_hosts, connection_params=g5k.default_oarsh_oarcp_params, name="Run VM on all hosts")
         return vm_task.start()
 
-    def prepare_vm(self):
+    def prepare_server(self):
+        script = """\
+# Add direct route to VM network
+sudo-g5k ip route replace {vm_subnet} dev br0 || exit 1
+
+# Increase max number of incoming connections
+sudo-g5k sysctl net.ipv4.tcp_syncookies=0 || exit 1
+sudo-g5k sysctl net.core.somaxconn=8192 || exit 1
+sudo-g5k sysctl fs.file-max=12582912 || exit 1
+        """.format(vm_subnet=self.subnet)
+        task = execo.Remote(script, [self.server], connection_params=g5k.default_oarsh_oarcp_params, name="Setup server").start()
+        return task
+
+    def wait_until_vm_ready(self):
         self.vm = [execo.Host(ip, user='root') for ip in self.vm_ips]
+        # TODO: find a better way
+        execo.sleep(5)
+        return
         task = execo.Remote("date", self.vm, name="Test VM reachability").run()
         print(execo.Report([task]).to_string())
-        for s in task.processes:
-            print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
+
+    def prepare_vm(self):
+        script = """\
+# Add direct route to server.
+# We use the old-style "route" because it can resolve DNS names, unlike "ip route"
+route add {server_name} eth0 || exit 1
+
+# Increase max number of outgoing connections
+sysctl net.ipv4.ip_local_port_range="1024 65535" || exit 1
+sysctl net.ipv4.tcp_tw_reuse=1 || exit 1
+
+# No connection tracking
+iptables -t raw -A PREROUTING -p tcp -j NOTRACK || exit 1
+iptables -t raw -A OUTPUT -p tcp -j NOTRACK || exit 1
+        """.format(server_name=self.server.address)
+        task = execo.Remote(script, self.vm, name="Setup VM").start()
         return task
 
     def run(self):
@@ -137,16 +167,25 @@ wait
             self.prepare_subnet()
             logger.debug("Prepared subnet")
             g5k.wait_oar_job_start(*self.machines_job)
-            self.prepare_machines()
+            machines_setup_process = self.prepare_machines()
+            machines_setup_process.wait()
             logger.debug("Prepared physical machines")
             self.vm_process = self.start_all_vm()
-            self.prepare_vm()
-            logger.info("Started all VMs, waiting for them to terminate.")
-            self.vm_process.wait()
+            # Ensure VM are killed when we exit
+            with self.vm_process:
+                server_setup_process = self.prepare_server()
+                self.wait_until_vm_ready()
+                vm_setup_process = self.prepare_vm()
+                server_setup_process.wait()
+                logger.debug("Prepared server: {}".format(self.server.address))
+                vm_setup_process.wait()
+                logger.debug("Prepared VM")
+                logger.info("Started all VMs, waiting for them to terminate.")
+                self.vm_process.wait()
+        finally:
             print(execo.Report([self.vm_process]).to_string())
             for s in self.vm_process.processes:
                 print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
-        finally:
             #g5k.oardel([job, subnet_job])
             pass
 
