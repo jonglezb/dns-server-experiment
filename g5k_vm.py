@@ -1,11 +1,71 @@
 #!/usr/bin/env python3
 
 import argparse
+import time
 
 import execo
 import execo_g5k as g5k
 import execo_engine as engine
 from execo_engine import logger
+
+
+# Example from Matthieu Imbert on the execo-users mailing list
+def check_hosts_up(hosts, timeout=None, connection_params=None, polling_interval=5):
+    """Check that a list of host are joinable with ssh.
+
+    Checks that all hosts of the list are joinable with ssh. Retry
+    continuously to connect to them every <polling_interval> seconds,
+    until either all are reachable or the timeout is reached. Returns
+    the list of hosts which are joinable.
+
+    :param hosts: list of hosts
+
+    :param timeout: timeout of the checks. No timeout if None.
+
+    :param connection_params: to connect to the hosts. Note that the
+      ssh_option entry of the connection_params is overwritten by this
+      function
+
+    :param polling_interval: tries to connect each <polling_interval>
+      seconds.
+
+    :returns: list of joinable hosts
+    """
+
+    start_ts = time.time()
+    if timeout != None:
+        completion_ts = start_ts + timeout
+    remaining_hosts = set(hosts)
+    if connection_params != None:
+        real_connection_params = connection_params
+    else:
+        real_connection_params = {}
+    while len(remaining_hosts) > 0 and (timeout == None or time.time() <= completion_ts):
+        #print('remaining_hosts=%s' % (remaining_hosts,))
+        if timeout != None:
+            next_poll_ts = min(time.time() + polling_interval, completion_ts)
+        else:
+            next_poll_ts = time.time() + polling_interval
+        poll_timeout = max(0, next_poll_ts - time.time())
+        real_connection_params.update({'ssh_options': ( '-tt',
+                                                        '-o', 'BatchMode=yes',
+                                                        '-o', 'PasswordAuthentication=no',
+                                                        '-o', 'StrictHostKeyChecking=no',
+                                                        '-o', 'UserKnownHostsFile=/dev/null',
+                                                        '-o', 'ConnectTimeout=%s' % (int(poll_timeout),))})
+        check = execo.Remote('true',
+                             remaining_hosts,
+                             connection_params=real_connection_params,
+                             process_args={'timeout': poll_timeout,
+                                           'nolog_exit_code': True,
+                                           'nolog_timeout': True}).run()
+        hosts_up = [ p.host for p in check.processes if p.finished_ok ]
+        #print('hosts_up=%s' %(hosts_up,))
+        remaining_hosts = remaining_hosts.difference(hosts_up)
+        if len(remaining_hosts) > 0:
+            execo.sleep(max(0, next_poll_ts - time.time()))
+    return list(set(hosts).difference(remaining_hosts))
+
 
 class DNSServerExperiment(engine.Engine):
     def __init__(self):
@@ -135,12 +195,10 @@ sudo-g5k sysctl fs.file-max=12582912 || exit 1
         return task
 
     def wait_until_vm_ready(self):
-        self.vm = [execo.Host(ip, user='root') for ip in self.vm_ips]
-        # TODO: find a better way
-        execo.sleep(5)
-        return
-        task = execo.Remote("date", self.vm, name="Test VM reachability").run()
-        print(execo.Report([task]).to_string())
+        prospective_vms = [execo.Host(ip, user='root') for ip in self.vm_ips]
+        self.vm = check_hosts_up(prospective_vms, timeout=60)
+        logger.debug('Tried to spawn {} VMs.  Result: {} VMs are reachable.'.format(len(prospective_vms),
+                                                                                    len(self.vm)))
 
     def prepare_vm(self):
         script = """\
