@@ -196,9 +196,9 @@ sudo-g5k sysctl fs.file-max=12582912 || exit 1
 
     def wait_until_vm_ready(self):
         prospective_vms = [execo.Host(ip, user='root') for ip in self.vm_ips]
+        logger.debug('Waiting for {} VMs to become reachable...'.format(len(prospective_vms)))
         self.vm = check_hosts_up(prospective_vms, timeout=60)
-        logger.debug('Tried to spawn {} VMs.  Result: {} VMs are reachable.'.format(len(prospective_vms),
-                                                                                    len(self.vm)))
+        logger.debug('Result: {} VMs are reachable.'.format(len(self.vm)))
 
     def prepare_vm(self):
         script = """\
@@ -238,7 +238,7 @@ iptables -t raw -A OUTPUT -p tcp -j NOTRACK || exit 1
                 logger.debug("Prepared server: {}".format(self.server.address))
                 vm_setup_process.wait()
                 logger.debug("Prepared VM")
-                logger.info("Started all VMs, waiting for them to terminate.")
+                logger.info("Started {} VMs, waiting for them to terminate.".format(len(self.vm)))
                 self.vm_process.wait()
         finally:
             print(execo.Report([self.vm_process]).to_string())
