@@ -200,6 +200,12 @@ sudo-g5k sysctl fs.file-max=12582912 || exit 1
         self.vm = check_hosts_up(prospective_vms, timeout=60)
         logger.debug('Result: {} VMs are reachable.'.format(len(self.vm)))
 
+    def kill_all_vm(self):
+        task = execo.Remote("killall qemu-system-x86_64 || true", self.vm_hosts,
+                            connection_params=g5k.default_oarsh_oarcp_params,
+                            name="Kill all VMs")
+        task.run()
+
     def prepare_vm(self):
         script = """\
 # Add direct route to server.
@@ -241,6 +247,7 @@ iptables -t raw -A OUTPUT -p tcp -j NOTRACK || exit 1
                 logger.info("Started {} VMs, waiting for them to terminate.".format(len(self.vm)))
                 self.vm_process.wait()
         finally:
+            self.kill_all_vm()
             print(execo.Report([self.vm_process]).to_string())
             for s in self.vm_process.processes:
                 print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
