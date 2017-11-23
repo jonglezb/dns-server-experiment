@@ -74,10 +74,12 @@ class DNSServerExperiment(engine.Engine):
         self.args_parser.add_argument('--cluster',
                             help='Which Grid5000 cluster to use (defaut: any cluster)')
         self.args_parser.add_argument('--nb-hosts', '-N', type=int, default=2,
-                            help='Number of physical machines to reserve on the cluster (default: %(default)s)')
-        self.args_parser.add_argument('--job-id', '-j', type=int,
-                            help='Instead of making a reservation for machines, use an existing OAR job ID')
-        self.args_parser.add_argument('--subnet-job-id', '-J', type=int,
+                            help='Number of physical machines to reserve on the cluster to run VMs (default: %(default)s)')
+        self.args_parser.add_argument('--vmhosts-job-id', '-j', type=int,
+                            help='Instead of making a reservation for VM hosts, use an existing OAR job ID')
+        self.args_parser.add_argument('--server-job-id', '-J', type=int,
+                            help='Instead of making a reservation for the server, use an existing OAR job ID')
+        self.args_parser.add_argument('--subnet-job-id', '-S', type=int,
                             help='Instead of making a reservation for a subnet, use an existing OAR job ID')
         self.args_parser.add_argument('--vm-image', '-i', required=True,
                             help='Path to the qcow2 VM image to use (on the G5K frontend)')
@@ -90,12 +92,14 @@ class DNSServerExperiment(engine.Engine):
 
     def init(self):
         ## Physical machines
-        # OAR job for machines, represented as (oarjob ID, frontend)
-        self.machines_job = None
-        # Machine (execo.host.Host) to be used as server in the experiment
-        self.server = None
+        # OAR job for VM hosts, represented as (oarjob ID, frontend)
+        self.vmhosts_job = None
         # List of machines (execo.host.Host) to be used to host VMs
         self.vm_hosts = []
+        # OAR job for the server, represented as (oarjob ID, frontend)
+        self.server_job = None
+        # Machine (execo.host.Host) to be used as server in the experiment
+        self.server = None
         ## Network
         # OAR job for subnet, represented as (oarjob ID, frontend)
         self.subnet_job = None
@@ -123,10 +127,10 @@ class DNSServerExperiment(engine.Engine):
         [(jobid, site)] = g5k.oarsub([(submission , None)])
         self.subnet_job = (jobid, site)
 
-    def reserve_machines(self):
+    def reserve_vmhosts(self):
         # Existing job
-        if self.args.job_id:
-            self.machines_job = (self.args.job_id, None)
+        if self.args.vmhosts_job_id:
+            self.vmhosts_job = (self.args.vmhosts_job_id, None)
             return
         # New job
         if self.args.cluster:
@@ -137,7 +141,23 @@ class DNSServerExperiment(engine.Engine):
         submission = g5k.OarSubmission(resources=resources,
                                        walltime=self.args.walltime)
         [(jobid, site)] = g5k.oarsub([(submission , None)])
-        self.machines_job = (jobid, site)
+        self.vmhosts_job = (jobid, site)
+
+    def reserve_server(self):
+        # Existing job
+        if self.args.server_job_id:
+            self.server_job = (self.args.server_job_id, None)
+            return
+        # New job
+        if self.args.cluster:
+            resources = "{{cluster='{}'}}/switch=1/nodes=1".format(self.args.cluster)
+        else:
+            resources = "switch=1/nodes=1"
+        submission = g5k.OarSubmission(resources=resources,
+                                       walltime=self.args.walltime,
+                                       job_type="deploy")
+        [(jobid, site)] = g5k.oarsub([(submission , None)])
+        self.server_job = (jobid, site)
 
     def prepare_subnet(self):
         # subnet_params is a dict: http://execo.gforge.inria.fr/doc/latest-stable/execo_g5k.html#get-oar-job-subnets
@@ -146,13 +166,12 @@ class DNSServerExperiment(engine.Engine):
         self.subnet_ip_mac = ip_mac_list
 
     def prepare_machines(self):
-        nodes = g5k.get_oar_job_nodes(*self.machines_job)
-        # Split machines into one server, and several VM hosts
-        self.server = nodes[0]
-        self.vm_hosts = nodes[1:]
+        self.vm_hosts = g5k.get_oar_job_nodes(*self.vmhosts_job)
+        self.server =  g5k.get_oar_job_nodes(*self.server_job)[0]
         # Avoid conntrack on all machines
         task = execo.Remote("sudo-g5k iptables -t raw -A PREROUTING -p tcp -j NOTRACK; sudo-g5k iptables -t raw -A OUTPUT -p tcp -j NOTRACK",
-                            nodes, connection_params=g5k.default_oarsh_oarcp_params).start()
+                            self.vm_hosts + self.server,
+                            connection_params=g5k.default_oarsh_oarcp_params).start()
         return task
 
     def start_all_vm(self):
@@ -226,11 +245,16 @@ iptables -t raw -A OUTPUT -p tcp -j NOTRACK || exit 1
     def run(self):
         try:
             self.reserve_subnet()
-            self.reserve_machines()
+            self.reserve_vmhosts()
+            self.reserve_server()
             g5k.wait_oar_job_start(*self.subnet_job)
             self.prepare_subnet()
             logger.debug("Prepared subnet")
-            g5k.wait_oar_job_start(*self.machines_job)
+            logger.debug("Waiting for VM hosts job to start...")
+            g5k.wait_oar_job_start(*self.vmhosts_job)
+            logger.debug("Waiting for server job to start...")
+            g5k.wait_oar_job_start(*self.server_job)
+            logger.debug("Setting up machines...")
             machines_setup_process = self.prepare_machines()
             machines_setup_process.wait()
             logger.debug("Prepared physical machines")
