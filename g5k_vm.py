@@ -3,6 +3,7 @@
 import argparse
 import time
 import os
+import sys
 
 import execo
 import execo_g5k as g5k
@@ -210,17 +211,16 @@ wait
         deployment is done"""
         self.server = g5k.get_oar_job_nodes(*self.server_job)[0]
         if os.path.isfile(self.args.server_env):
-            d = Deployment([self.server], env_file=self.args.server_env)
+            d = g5k.Deployment([self.server], env_file=self.args.server_env)
         else:
-            d = Deployment([self.server], env_name=self.args.server_env,
+            d = g5k.Deployment([self.server], env_name=self.args.server_env,
                            user=self.args.kadeploy_user)
         logger.debug("Deploying environment '{}' on server {}...".format(self.args.server_env,
                                                                          self.server.address))
         deployed, undeployed = g5k.kadeploy.deploy(d)
         if len(deployed) == 0:
             logger.error("Could not deploy server")
-            exit(1)
-        self.server = deployed[0]
+            sys.exit(1)
 
     def prepare_server(self):
         # Server is already deployed
