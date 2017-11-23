@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
 
+"""
+This python script is built around Execo <http://execo.gforge.inria.fr/doc/latest-stable/>
+to run server load experiments on Grid-5000.
+
+The basic idea is to have a powerful server running unbound, and then
+spawn hundreds of VMs, each one opening 50k TCP connections to the server
+and performing DNS queries.
+
+The result of the experiment consists in measuring the end-to-end response
+time experienced by clients (DNS queries), and the load on the server.
+"""
+
 import argparse
 import time
 import os
