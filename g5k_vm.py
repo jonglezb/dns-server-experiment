@@ -232,6 +232,7 @@ ip route replace {vm_subnet} dev eth0 || exit 1
 sysctl net.ipv4.tcp_syncookies=0 || exit 1
 sysctl net.core.somaxconn=8192 || exit 1
 sysctl fs.file-max=12582912 || exit 1
+echo 12582912 > /proc/sys/fs/nr_open || exit 1
         """.format(vm_subnet=self.subnet)
         task = execo.Remote(script, [self.server],
                             connection_params=self.server_conn_params,
