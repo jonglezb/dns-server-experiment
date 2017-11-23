@@ -73,9 +73,9 @@ class DNSServerExperiment(engine.Engine):
         super(DNSServerExperiment, self).__init__()
         ## Parse command-line arguments
         self.args_parser.add_argument('--cluster',
-                            help='Which Grid5000 cluster to use (defaut: any cluster)')
+                            help='Which Grid5000 cluster to use (defaut: any cluster).  Unused if -j and -J are passed.')
         self.args_parser.add_argument('--nb-hosts', '-N', type=int, default=2,
-                            help='Number of physical machines to reserve on the cluster to run VMs (default: %(default)s)')
+                            help='Number of physical machines to reserve on the cluster to run VMs (default: %(default)s).  Unused if -j is passed.')
         self.args_parser.add_argument('--vmhosts-job-id', '-j', type=int,
                             help='Instead of making a reservation for VM hosts, use an existing OAR job ID')
         self.args_parser.add_argument('--server-job-id', '-J', type=int,
@@ -83,17 +83,17 @@ class DNSServerExperiment(engine.Engine):
         self.args_parser.add_argument('--subnet-job-id', '-S', type=int,
                             help='Instead of making a reservation for a subnet, use an existing OAR job ID')
         self.args_parser.add_argument('--server-env', '-e',
-                            help='Name of the Kadeploy environment (OS image) to deploy on the server.  Can be a filename or the name of a registered environment')
+                            help='Name of the Kadeploy environment (OS image) to deploy on the server.  Can be a filename or the name of a registered environment.')
         self.args_parser.add_argument('--kadeploy-user', '-u',
                             help='Kadeploy username, used when passing the name of a registered environment as server environment')
         self.args_parser.add_argument('--vm-image', '-i', required=True,
                             help='Path to the qcow2 VM image to use (on the G5K frontend)')
         self.args_parser.add_argument('--nb-vm', '-n', type=int, default=1,
-                            help='Number of VM to spawn on each physical machine (default: %(default)s)')
+                            help='Number of VM to spawn on each VM host (default: %(default)s)')
         self.args_parser.add_argument('--memory', '-m', type=int, default=2048,
                             help='Memory in MB to allocate to each VM (default: %(default)s)')
         self.args_parser.add_argument('--walltime', '-t', type=int,
-                            help='How much time the reservations should last, in seconds')
+                            help='How much time the reservations should last, in seconds.  Unused if -j, -J and -S are passed.')
 
     def init(self):
         ## Physical machines
