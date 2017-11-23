@@ -2,6 +2,7 @@
 
 import argparse
 import time
+import os
 
 import execo
 import execo_g5k as g5k
@@ -81,6 +82,10 @@ class DNSServerExperiment(engine.Engine):
                             help='Instead of making a reservation for the server, use an existing OAR job ID')
         self.args_parser.add_argument('--subnet-job-id', '-S', type=int,
                             help='Instead of making a reservation for a subnet, use an existing OAR job ID')
+        self.args_parser.add_argument('--server-env', '-e',
+                            help='Name of the Kadeploy environment (OS image) to deploy on the server.  Can be a filename or the name of a registered environment')
+        self.args_parser.add_argument('--kadeploy-user', '-u',
+                            help='Kadeploy username, used when passing the name of a registered environment as server environment')
         self.args_parser.add_argument('--vm-image', '-i', required=True,
                             help='Path to the qcow2 VM image to use (on the G5K frontend)')
         self.args_parser.add_argument('--nb-vm', '-n', type=int, default=1,
@@ -100,6 +105,7 @@ class DNSServerExperiment(engine.Engine):
         self.server_job = None
         # Machine (execo.host.Host) to be used as server in the experiment
         self.server = None
+        self.server_conn_params = {'user': 'root'}
         ## Network
         # OAR job for subnet, represented as (oarjob ID, frontend)
         self.subnet_job = None
@@ -165,12 +171,11 @@ class DNSServerExperiment(engine.Engine):
         self.subnet = subnet_params['ip_prefix']
         self.subnet_ip_mac = ip_mac_list
 
-    def prepare_machines(self):
+    def prepare_vmhosts(self):
         self.vm_hosts = g5k.get_oar_job_nodes(*self.vmhosts_job)
-        self.server =  g5k.get_oar_job_nodes(*self.server_job)[0]
         # Avoid conntrack on all machines
         task = execo.Remote("sudo-g5k iptables -t raw -A PREROUTING -p tcp -j NOTRACK; sudo-g5k iptables -t raw -A OUTPUT -p tcp -j NOTRACK",
-                            self.vm_hosts + self.server,
+                            self.vm_hosts,
                             connection_params=g5k.default_oarsh_oarcp_params).start()
         return task
 
@@ -200,17 +205,37 @@ wait
         vm_task = execo.Remote(script, self.vm_hosts, connection_params=g5k.default_oarsh_oarcp_params, name="Run VM on all hosts")
         return vm_task.start()
 
+    def deploy_server(self):
+        """Deploy the server with the given Kadeploy environment.  Blocks until
+        deployment is done"""
+        self.server = g5k.get_oar_job_nodes(*self.server_job)[0]
+        if os.path.isfile(self.args.server_env):
+            d = Deployment([self.server], env_file=self.args.server_env)
+        else:
+            d = Deployment([self.server], env_name=self.args.server_env,
+                           user=self.args.kadeploy_user)
+        logger.debug("Deploying environment '{}' on server {}...".format(self.args.server_env,
+                                                                         self.server.address))
+        deployed, undeployed = g5k.kadeploy.deploy(d)
+        if len(deployed) == 0:
+            logger.error("Could not deploy server")
+            exit(1)
+        self.server = deployed[0]
+
     def prepare_server(self):
+        # Server is already deployed
         script = """\
 # Add direct route to VM network
-sudo-g5k ip route replace {vm_subnet} dev br0 || exit 1
+ip route replace {vm_subnet} dev eth0 || exit 1
 
 # Increase max number of incoming connections
-sudo-g5k sysctl net.ipv4.tcp_syncookies=0 || exit 1
-sudo-g5k sysctl net.core.somaxconn=8192 || exit 1
-sudo-g5k sysctl fs.file-max=12582912 || exit 1
+sysctl net.ipv4.tcp_syncookies=0 || exit 1
+sysctl net.core.somaxconn=8192 || exit 1
+sysctl fs.file-max=12582912 || exit 1
         """.format(vm_subnet=self.subnet)
-        task = execo.Remote(script, [self.server], connection_params=g5k.default_oarsh_oarcp_params, name="Setup server").start()
+        task = execo.Remote(script, [self.server],
+                            connection_params=self.server_conn_params,
+                            name="Setup server").start()
         return task
 
     def wait_until_vm_ready(self):
@@ -254,10 +279,13 @@ iptables -t raw -A OUTPUT -p tcp -j NOTRACK || exit 1
             g5k.wait_oar_job_start(*self.vmhosts_job)
             logger.debug("Waiting for server job to start...")
             g5k.wait_oar_job_start(*self.server_job)
-            logger.debug("Setting up machines...")
-            machines_setup_process = self.prepare_machines()
+            logger.debug("Setting up VM hosts...")
+            machines_setup_process = self.prepare_vmhosts()
+            logger.debug("Deploying server image...")
+            server_deploy_process = self.deploy_server()
+            logger.debug("Server is deployed.")
             machines_setup_process.wait()
-            logger.debug("Prepared physical machines")
+            logger.debug("VM hosts are setup.")
             self.vm_process = self.start_all_vm()
             # Ensure VM are killed when we exit
             with self.vm_process:
