@@ -308,6 +308,13 @@ EOF
                             name="Unbound server process").start()
         return task
 
+    def start_tcpclient_vm(self):
+        """Start tcpclient on all VM"""
+        # TODO: allow to configure query rate
+        script = "/root/tcpscaler/tcpclient -R -p 53 -r 50 -t 50000 {}".format(self.server.address)
+        task = execo.Remote(script, self.vm, name="tcpclient").start()
+        return task
+
     def run(self):
         try:
             self.reserve_subnet()
@@ -340,6 +347,11 @@ EOF
                 logger.info("Started {} VMs.".format(len(self.vm)))
                 unbound = self.start_dns_server()
                 logger.info("Started unbound on {}.".format(self.server.address))
+                # Leave time for unbound to start
+                execo.sleep(90)
+                logger.info("Starting tcpclient on all VMs...")
+                clients = self.start_tcpclient_vm()
+                clients.wait()
                 unbound.wait()
                 #self.vm_process.wait()
         finally:
