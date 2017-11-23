@@ -267,6 +267,34 @@ iptables -t raw -A OUTPUT -p tcp -j NOTRACK || exit 1
         task = execo.Remote(script, self.vm, name="Setup VM").start()
         return task
 
+    def start_dns_server(self):
+        unbound_config = """\
+cat > /tmp/unbound.conf <<EOF
+server:
+  interface: 0.0.0.0
+  access-control: 0.0.0.0/0 allow
+  username: root
+  use-syslog: no
+  chroot: ""
+  directory: "."
+  pidfile: "/tmp/unbound.pid"
+  incoming-num-tcp: 350000
+  num-threads: 32
+  msg-buffer-size: 4096
+  so-reuseport: yes
+  local-zone: example.com static
+  local-data: "example.com A 42.42.42.42"
+EOF
+        """
+        execo.Remote(unbound_config, [self.server],
+                     connection_params=self.server_conn_params,
+                     name="Configure unbound").run()
+        task = execo.Remote("/root/unbound/unbound -d -v -c /tmp/unbound.conf",
+                            [self.server],
+                            connection_params=self.server_conn_params,
+                            name="Unbound server process").start()
+        return task
+
     def run(self):
         try:
             self.reserve_subnet()
@@ -296,8 +324,11 @@ iptables -t raw -A OUTPUT -p tcp -j NOTRACK || exit 1
                 logger.debug("Prepared server: {}".format(self.server.address))
                 vm_setup_process.wait()
                 logger.debug("Prepared VM")
-                logger.info("Started {} VMs, waiting for them to terminate.".format(len(self.vm)))
-                self.vm_process.wait()
+                logger.info("Started {} VMs.".format(len(self.vm)))
+                unbound = self.start_dns_server()
+                logger.info("Started unbound on {}.".format(self.server.address))
+                unbound.wait()
+                #self.vm_process.wait()
         finally:
             self.kill_all_vm()
             print(execo.Report([self.vm_process]).to_string())
