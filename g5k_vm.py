@@ -126,7 +126,8 @@ class DNSServerExperiment(engine.Engine):
         self.server_job = None
         # Machine (execo.host.Host) to be used as server in the experiment
         self.server = None
-        self.server_conn_params = {'user': 'root'}
+        self.server_conn_params = execo.default_connection_params
+        self.server_conn_params.update({'user': 'root'})
         ## Network
         # OAR job for subnet, represented as (oarjob ID, frontend)
         self.subnet_job = None
