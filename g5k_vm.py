@@ -223,7 +223,9 @@ wait
     def deploy_server(self):
         """Deploy the server with the given Kadeploy environment.  Blocks until
         deployment is done"""
-        self.server = g5k.get_oar_job_nodes(*self.server_job)[0]
+        # Sort servers by name and take the first one: if several servers
+        # are part of the OAR job, this ensures we always pick the same one.
+        self.server = sorted(g5k.get_oar_job_nodes(*self.server_job), key=lambda node: node.address)[0]
         if os.path.isfile(self.args.server_env):
             d = g5k.Deployment([self.server], env_file=self.args.server_env)
         else:
