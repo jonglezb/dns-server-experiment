@@ -291,6 +291,15 @@ iptables -t raw -A OUTPUT -p tcp -j NOTRACK || exit 1
         return task
 
     def start_dns_server(self):
+        nb_threads = 32
+        unbound_params = {
+            "buffer_size": 4096,
+            "nb_threads": nb_threads,
+            "max_tcp_clients_per_thread": 500 + self.args.client_connections * len(self.vm) // nb_threads,
+        }
+        max_clients = nb_threads * unbound_params["max_tcp_clients_per_thread"]
+        logger.debug("Unbound using {nb_threads} threads, {max_tcp_clients_per_thread} max clients per thread, {buffer_size}b buffer size".format(**unbound_params))
+        logger.debug("Max clients: {}k".format(max_clients // 1000))
         unbound_config = """\
 cat > /tmp/unbound.conf <<EOF
 server:
@@ -301,14 +310,14 @@ server:
   chroot: ""
   directory: "."
   pidfile: "/tmp/unbound.pid"
-  incoming-num-tcp: 35000
-  num-threads: 32
-  msg-buffer-size: 4096
+  incoming-num-tcp: {max_tcp_clients_per_thread}
+  num-threads: {nb_threads}
+  msg-buffer-size: {buffer_size}
   so-reuseport: yes
   local-zone: example.com static
   local-data: "example.com A 42.42.42.42"
 EOF
-        """
+        """.format(**unbound_params)
         execo.Remote(unbound_config, [self.server],
                      connection_params=self.server_conn_params,
                      name="Configure unbound").run()
