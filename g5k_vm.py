@@ -109,6 +109,12 @@ class DNSServerExperiment(engine.Engine):
                             help='Memory in MB to allocate to each VM (default: %(default)s)')
         self.args_parser.add_argument('--walltime', '-t', type=int,
                             help='How much time the reservations should last, in seconds.  Unused if -j, -J and -S are passed.')
+        self.args_parser.add_argument('--client-duration', '-T', type=int, required=True,
+                            help='Duration, in seconds, for which to run the TCP clients')
+        self.args_parser.add_argument('--client-query-rate', '-Q', type=int, required=True,
+                            help='Number of queries per second for each client (VM)')
+        self.args_parser.add_argument('--client-connections', '-C', type=int, required=True,
+                            help='Number of TCP connections opened by each client (VM)')
 
     def init(self):
         ## Physical machines
@@ -314,8 +320,11 @@ EOF
 
     def start_tcpclient_vm(self):
         """Start tcpclient on all VM"""
-        # TODO: allow to configure query rate and duration
-        script = "/root/tcpscaler/tcpclient -t 120 -R -p 53 -r 50 -c 1000 {}".format(self.server.address)
+        script = "/root/tcpscaler/tcpclient -t {} -R -p 53 -r {} -c {} {}"
+        script = script.format(self.args.client_duration,
+                               self.args.client_query_rate,
+                               self.args.client_connections,
+                               self.server.address)
         task = execo.Remote(script, self.vm, name="tcpclient").start()
         return task
 
