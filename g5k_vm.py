@@ -291,7 +291,7 @@ server:
   chroot: ""
   directory: "."
   pidfile: "/tmp/unbound.pid"
-  incoming-num-tcp: 350000
+  incoming-num-tcp: 35000
   num-threads: 32
   msg-buffer-size: 4096
   so-reuseport: yes
@@ -310,8 +310,8 @@ EOF
 
     def start_tcpclient_vm(self):
         """Start tcpclient on all VM"""
-        # TODO: allow to configure query rate
-        script = "/root/tcpscaler/tcpclient -R -p 53 -r 50 -t 50000 {}".format(self.server.address)
+        # TODO: allow to configure query rate and duration
+        script = "/root/tcpscaler/tcpclient -t 120 -R -p 53 -r 50 -c 1000 {}".format(self.server.address)
         task = execo.Remote(script, self.vm, name="tcpclient").start()
         return task
 
@@ -357,8 +357,8 @@ EOF
         finally:
             self.kill_all_vm()
             print(execo.Report([self.vm_process]).to_string())
-            for s in self.vm_process.processes:
-                print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
+            #for s in self.vm_process.processes:
+            #    print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
             #g5k.oardel([job, subnet_job])
             pass
 
