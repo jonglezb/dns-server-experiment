@@ -319,6 +319,18 @@ EOF
         task = execo.Remote(script, self.vm, name="tcpclient").start()
         return task
 
+    def log_experimental_conditions(self):
+        logger.debug("Subnet [job {}]: {}".format(self.subnet_job[0],
+                                                  self.subnet))
+        vmhosts = [s.address for s in g5k.get_oar_job_nodes(*self.vmhosts_job)]
+        logger.debug("{} VM hosts [job {}]: {}".format(len(vmhosts),
+                                                       self.vmhosts_job[0],
+                                                       ' '.join(vmhosts)))
+        servers = [s.address for s in g5k.get_oar_job_nodes(*self.server_job)]
+        logger.debug("{} servers [job {}]: {}".format(len(servers),
+                                                      self.server_job[0],
+                                                      ' '.join(servers)))
+
     def run(self):
         rtt_file = self.result_dir + "/rtt.csv"
         try:
@@ -332,6 +344,7 @@ EOF
             g5k.wait_oar_job_start(*self.vmhosts_job)
             logger.debug("Waiting for server job to start...")
             g5k.wait_oar_job_start(*self.server_job)
+            self.log_experimental_conditions()
             logger.debug("Setting up VM hosts...")
             machines_setup_process = self.prepare_vmhosts()
             logger.debug("Deploying server image...")
@@ -357,6 +370,7 @@ EOF
                 logger.info("Starting tcpclient on all VMs...")
                 clients = self.start_tcpclient_vm()
                 clients.wait()
+                logger.info("tcpclient finished, writing performance results to disk.")
                 with open(rtt_file, 'w') as rtt_output:
                     rtt = csv.writer(rtt_output)
                     rtt.writerow(["VM_ID", "RTT_us"])
@@ -364,7 +378,7 @@ EOF
                         for line in iter(client.stdout.splitlines()):
                             if re.match(r"[0-9]", line):
                                 rtt.writerow(["X", int(line)])
-                unbound.wait()
+                #unbound.wait()
                 #self.vm_process.wait()
         finally:
             self.kill_all_vm()
