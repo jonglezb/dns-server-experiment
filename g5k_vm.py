@@ -16,6 +16,8 @@ import argparse
 import time
 import os
 import sys
+import re
+import csv
 
 import execo
 import execo_g5k as g5k
@@ -316,6 +318,7 @@ EOF
         return task
 
     def run(self):
+        rtt_file = self.result_dir + "/rtt.csv"
         try:
             self.reserve_subnet()
             self.reserve_vmhosts()
@@ -352,6 +355,13 @@ EOF
                 logger.info("Starting tcpclient on all VMs...")
                 clients = self.start_tcpclient_vm()
                 clients.wait()
+                with open(rtt_file, 'w') as rtt_output:
+                    rtt = csv.writer(rtt_output)
+                    rtt.writerow(["VM_ID", "RTT_us"])
+                    for client in clients.processes:
+                        for line in iter(client.stdout.splitlines()):
+                            if re.match(r"[0-9]", line):
+                                rtt.writerow(["X", int(line)])
                 unbound.wait()
                 #self.vm_process.wait()
         finally:
