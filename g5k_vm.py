@@ -321,7 +321,8 @@ EOF
         execo.Remote(unbound_config, [self.server],
                      connection_params=self.server_conn_params,
                      name="Configure unbound").run()
-        task = execo.Remote("/root/unbound/unbound -d -v -c /tmp/unbound.conf",
+        # Kill possibly lingering unbound instances
+        task = execo.Remote("pkill unbound; sleep 3; /root/unbound/unbound -d -v -c /tmp/unbound.conf",
                             [self.server],
                             connection_params=self.server_conn_params,
                             name="Unbound server process").start()
