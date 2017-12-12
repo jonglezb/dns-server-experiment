@@ -401,11 +401,13 @@ EOF
                 logger.info("tcpclient finished, writing performance results to disk.")
                 with open(rtt_file, 'w') as rtt_output:
                     rtt = csv.writer(rtt_output)
-                    rtt.writerow(["VM_ID", "RTT_us"])
-                    for client in clients.processes:
+                    rtt.writerow(["VM_ID", "connection_ID", "answer_timestamp", "RTT_us"])
+                    for client_id, client in enumerate(clients.processes):
                         for line in iter(client.stdout.splitlines()):
                             if re.match(r"[0-9]", line):
-                                rtt.writerow(["X", int(line)])
+                                # Expect: connection ID, timestamp, RTT
+                                data = line.split(",")
+                                rtt.writerow([client_id, int(data[0]), float(data[1]), int(data[2])])
                 #unbound.wait()
                 #self.vm_process.wait()
         finally:
