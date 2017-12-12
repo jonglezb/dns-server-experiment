@@ -278,6 +278,11 @@ echo 20000000 > /proc/sys/fs/nr_open || exit 1
 
     def prepare_vm(self):
         script = """\
+# Update git repository for tcpclient.
+cd /root/tcpscaler || exit 1
+git pull || exit 1
+make || exit 1
+
 # Add direct route to server.
 # We use the old-style "route" because it can resolve DNS names, unlike "ip route"
 route add {server_name} eth0 || exit 1
