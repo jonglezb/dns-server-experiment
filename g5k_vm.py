@@ -256,6 +256,7 @@ ip route replace {vm_subnet} dev eth0 || exit 1
 # Increase max number of incoming connections
 sysctl net.ipv4.tcp_syncookies=0 || exit 1
 sysctl net.core.somaxconn=100000 || exit 1
+sysctl net.ipv4.tcp_max_syn_backlog=100000 || exit 1
 sysctl fs.file-max=20000000 || exit 1
 echo 20000000 > /proc/sys/fs/nr_open || exit 1
         """.format(vm_subnet=self.subnet)
