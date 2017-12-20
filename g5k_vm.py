@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+from __future__ import division, print_function
+
 """
 This python script is built around Execo <http://execo.gforge.inria.fr/doc/latest-stable/>
 to run server load experiments on Grid-5000.
@@ -304,7 +306,8 @@ iptables -t raw -A OUTPUT -p tcp -j NOTRACK || exit 1
         unbound_params = {
             "buffer_size": 4096,
             "nb_threads": nb_threads,
-            "max_tcp_clients_per_thread": 500 + self.args.client_connections * len(self.vm) // nb_threads,
+            # Add a 5% margin to the number of client slots
+            "max_tcp_clients_per_thread": 500 + int(1.05 * self.args.client_connections * len(self.vm) / nb_threads),
         }
         max_clients = nb_threads * unbound_params["max_tcp_clients_per_thread"]
         logger.debug("Unbound using {nb_threads} threads, {max_tcp_clients_per_thread} max clients per thread, {buffer_size}b buffer size".format(**unbound_params))
