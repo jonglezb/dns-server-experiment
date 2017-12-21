@@ -424,9 +424,15 @@ EOF
                 vm_setup_process = self.prepare_vm()
                 server_setup_process.wait()
                 self.log_output(server_setup_process, "server_setup_process")
+                if not server_setup_process.ok:
+                    logger.error("Error while preparing server, please check logs for 'server_setup_process'")
+                    raise Exception
                 logger.debug("Prepared server: {}".format(self.server.address))
                 vm_setup_process.wait()
                 self.log_output(vm_setup_process, "vm_setup_process")
+                if not vm_setup_process.ok:
+                    logger.error("Error while preparing VMs, please check logs for 'vm_setup_process'")
+                    raise Exception
                 logger.debug("Prepared VM")
                 logger.info("Started {} VMs.".format(len(self.vm)))
                 unbound = self.start_dns_server()
