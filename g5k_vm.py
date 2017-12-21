@@ -392,6 +392,7 @@ EOF
 
     def run(self):
         rtt_file = self.result_dir + "/rtt.csv"
+        unbound = None
         try:
             self.reserve_subnet()
             self.reserve_vmhosts()
@@ -442,17 +443,21 @@ EOF
                                 # Expect: connection ID, timestamp, RTT
                                 data = line.split(",")
                                 rtt.writerow([client_id, int(data[0]), float(data[1]), int(data[2])])
-                #unbound.wait()
-                #self.vm_process.wait()
         except Exception as e:
             logger.error("Exception raised: {}\n{}".format(e, format_exc()))
         finally:
             #self.kill_all_vm()
             if self.vm_process:
                 self.vm_process.kill()
+            if unbound:
+                unbound.kill()
+                logger.debug("Waiting for unbound to exit")
+                self.unbound.wait()
+                self.log_output(unbound, "unbound")
+            if self.vm_process:
                 logger.debug("Waiting for VM to exit")
                 self.vm_process.wait()
-                logger.info("All VM shut down")
+                logger.info("Unbound an all VMs are shut down")
                 self.log_output(self.vm_process, "vm_process")
                 print(execo.Report([self.vm_process]).to_string())
             #for s in self.vm_process.processes:
