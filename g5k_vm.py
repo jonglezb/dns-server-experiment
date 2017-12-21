@@ -369,6 +369,20 @@ EOF
                                                       self.server_job[0],
                                                       ' '.join(servers)))
 
+    def log_output(self, task, task_name):
+        logger.debug("Logging stdout/stderr of task {} ({} processes)".format(task_name, len(task.processes)))
+        for process_id, process in enumerate(task.processes):
+            if len(task.processes) > 1:
+                stdout_file = self.result_dir + "/{}_{}_stdout".format(task_name, process_id)
+                stderr_file = self.result_dir + "/{}_{}_stderr".format(task_name, process_id)
+            else:
+                stdout_file = self.result_dir + "/{}_stdout".format(task_name)
+                stderr_file = self.result_dir + "/{}_stderr".format(task_name)
+            with open(stdout_file, 'w') as stdout:
+                stdout.write(process.stdout)
+            with open(stderr_file, 'w') as stderr:
+                stderr.write(process.stderr)
+
     def run(self):
         rtt_file = self.result_dir + "/rtt.csv"
         try:
@@ -397,8 +411,10 @@ EOF
                 self.wait_until_vm_ready()
                 vm_setup_process = self.prepare_vm()
                 server_setup_process.wait()
+                self.log_output(server_setup_process, "server_setup_process")
                 logger.debug("Prepared server: {}".format(self.server.address))
                 vm_setup_process.wait()
+                self.log_output(vm_setup_process, "vm_setup_process")
                 logger.debug("Prepared VM")
                 logger.info("Started {} VMs.".format(len(self.vm)))
                 unbound = self.start_dns_server()
@@ -409,6 +425,7 @@ EOF
                 clients = self.start_tcpclient_vm()
                 clients.wait()
                 logger.info("tcpclient finished, writing performance results to disk.")
+                self.log_output(clients, "clients")
                 with open(rtt_file, 'w') as rtt_output:
                     rtt = csv.writer(rtt_output)
                     rtt.writerow(["VM_ID", "connection_ID", "answer_timestamp", "RTT_us"])
@@ -429,6 +446,7 @@ EOF
                 logger.debug("Waiting for VM to exit")
                 self.vm_process.wait()
                 logger.info("All VM shut down")
+                self.log_output(self.vm_process, "vm_process")
                 print(execo.Report([self.vm_process]).to_string())
             #for s in self.vm_process.processes:
             #    print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
