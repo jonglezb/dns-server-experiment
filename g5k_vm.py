@@ -200,8 +200,15 @@ class DNSServerExperiment(engine.Engine):
 
     def prepare_vmhosts(self):
         self.vm_hosts = g5k.get_oar_job_nodes(*self.vmhosts_job)
-        # Avoid conntrack on all machines
-        task = execo.Remote("sudo-g5k iptables -t raw -A PREROUTING -p tcp -j NOTRACK; sudo-g5k iptables -t raw -A OUTPUT -p tcp -j NOTRACK",
+        script = """\
+# Temporary fix for https://intranet.grid5000.fr/bugzilla/show_bug.cgi?id=8848
+sudo-g5k sed -i -e 's#/usr/sbin/tunctl#/usr/bin/tunctl#g' /usr/local/bin/create_tap
+
+# Avoid conntrack on all machines
+sudo-g5k iptables -t raw -A PREROUTING -p tcp -j NOTRACK
+sudo-g5k iptables -t raw -A OUTPUT -p tcp -j NOTRACK
+        """
+        task = execo.Remote(script,
                             self.vm_hosts,
                             connection_params=g5k.default_oarsh_oarcp_params).start()
         return task
