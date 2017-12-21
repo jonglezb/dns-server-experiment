@@ -260,20 +260,22 @@ wait
     def prepare_server(self):
         # Server is already deployed
         script = """\
+rc=0
 # Add direct route to VM network
-ip route replace {vm_subnet} dev eth0 || exit 1
+ip route replace {vm_subnet} dev eth0 || rc=$?
 
 # Increase max number of incoming connections
-sysctl net.ipv4.tcp_syncookies=0 || exit 1
-sysctl net.core.somaxconn=100000 || exit 1
-sysctl net.ipv4.tcp_max_syn_backlog=100000 || exit 1
-sysctl fs.file-max=20000000 || exit 1
-echo 20000000 > /proc/sys/fs/nr_open || exit 1
+sysctl net.ipv4.tcp_syncookies=0 || rc=$?
+sysctl net.core.somaxconn=100000 || rc=$?
+sysctl net.ipv4.tcp_max_syn_backlog=100000 || rc=$?
+sysctl fs.file-max=20000000 || rc=$?
+echo 20000000 > /proc/sys/fs/nr_open || rc=$?
 
 # Update git repository for unbound.
-cd /root/unbound || exit 1
-git pull || exit 1
-make -j8 || exit 1
+cd /root/unbound || rc=$?
+git pull || rc=$?
+make -j8 || rc=$?
+exit $rc
         """.format(vm_subnet=self.subnet)
         task = execo.Remote(script, [self.server],
                             connection_params=self.server_conn_params,
@@ -294,22 +296,24 @@ make -j8 || exit 1
 
     def prepare_vm(self):
         script = """\
+rc=0
 # Update git repository for tcpclient.
-cd /root/tcpscaler || exit 1
-git pull || exit 1
-make || exit 1
+cd /root/tcpscaler || rc=$?
+git pull || rc=$?
+make || rc=$?
 
-# Add direct route to server.
+# Add direct route to server (but don't fail if it fails).
 # We use the old-style "route" because it can resolve DNS names, unlike "ip route"
-route add {server_name} eth0 || exit 1
+route add {server_name} eth0 || echo "Failed to add route to {server_name}" >&2
 
 # Increase max number of outgoing connections
-sysctl net.ipv4.ip_local_port_range="1024 65535" || exit 1
-sysctl net.ipv4.tcp_tw_reuse=1 || exit 1
+sysctl net.ipv4.ip_local_port_range="1024 65535" || rc=$?
+sysctl net.ipv4.tcp_tw_reuse=1 || rc=$?
 
 # No connection tracking
-iptables -t raw -A PREROUTING -p tcp -j NOTRACK || exit 1
-iptables -t raw -A OUTPUT -p tcp -j NOTRACK || exit 1
+iptables -t raw -A PREROUTING -p tcp -j NOTRACK || rc=$?
+iptables -t raw -A OUTPUT -p tcp -j NOTRACK || rc=$?
+exit $rc
         """.format(server_name=self.server.address)
         task = execo.Remote(script, self.vm, name="Setup VM").start()
         return task
