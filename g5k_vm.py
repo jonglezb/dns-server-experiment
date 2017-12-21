@@ -20,6 +20,7 @@ import os
 import sys
 import re
 import csv
+from traceback import format_exc
 
 import execo
 import execo_g5k as g5k
@@ -414,13 +415,19 @@ EOF
                                 rtt.writerow([client_id, int(data[0]), float(data[1]), int(data[2])])
                 #unbound.wait()
                 #self.vm_process.wait()
+        except Exception as e:
+            logger.error("Exception raised: {}\n{}".format(e, format_exc()))
         finally:
-            self.kill_all_vm()
-            print(execo.Report([self.vm_process]).to_string())
+            #self.kill_all_vm()
+            if self.vm_process:
+                self.vm_process.kill()
+                logger.debug("Waiting for VM to exit")
+                self.vm_process.wait()
+                logger.info("All VM shut down")
+                print(execo.Report([self.vm_process]).to_string())
             #for s in self.vm_process.processes:
             #    print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
             #g5k.oardel([job, subnet_job])
-            pass
 
 
 if __name__ == "__main__":
