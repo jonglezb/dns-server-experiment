@@ -155,7 +155,7 @@ class DNSServerExperiment(engine.Engine):
             self.subnet_job = (self.args.subnet_job_id, None)
             return
         # New job
-        submission = g5k.OarSubmission(resources="slash_22=1",
+        submission = g5k.OarSubmission(resources="slash_22=1", name="VM subnet",
                                        walltime=self.args.walltime)
         [(jobid, site)] = g5k.oarsub([(submission , None)])
         self.subnet_job = (jobid, site)
@@ -171,7 +171,7 @@ class DNSServerExperiment(engine.Engine):
                                                                     self.args.nb_hosts)
         else:
             resources = "switch=1/nodes={}".format(self.args.nb_hosts)
-        submission = g5k.OarSubmission(resources=resources,
+        submission = g5k.OarSubmission(resources=resources, name="VM hosts",
                                        walltime=self.args.walltime)
         [(jobid, site)] = g5k.oarsub([(submission , None)])
         self.vmhosts_job = (jobid, site)
@@ -186,7 +186,7 @@ class DNSServerExperiment(engine.Engine):
             resources = "{{cluster='{}'}}/switch=1/nodes=1".format(self.args.cluster)
         else:
             resources = "switch=1/nodes=1"
-        submission = g5k.OarSubmission(resources=resources,
+        submission = g5k.OarSubmission(resources=resources, name="Server",
                                        walltime=self.args.walltime,
                                        job_type="deploy")
         [(jobid, site)] = g5k.oarsub([(submission , None)])
