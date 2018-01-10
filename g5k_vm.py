@@ -470,7 +470,7 @@ EOF
             if unbound:
                 unbound.kill()
                 logger.debug("Waiting for unbound to exit")
-                self.unbound.wait()
+                unbound.wait()
                 self.log_output(unbound, "unbound")
             if self.vm_process:
                 logger.debug("Waiting for VM to exit")
