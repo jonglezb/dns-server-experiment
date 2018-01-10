@@ -366,16 +366,16 @@ EOF
         return task
 
     def log_experimental_conditions(self):
-        logger.debug("Subnet [job {}]: {}".format(self.subnet_job[0],
-                                                  self.subnet))
+        logger.info("Subnet [job {}]: {}".format(self.subnet_job[0],
+                                                 self.subnet))
         vmhosts = [s.address for s in g5k.get_oar_job_nodes(*self.vmhosts_job)]
-        logger.debug("{} VM hosts [job {}]: {}".format(len(vmhosts),
-                                                       self.vmhosts_job[0],
-                                                       ' '.join(vmhosts)))
+        logger.info("{} VM hosts [job {}]: {}".format(len(vmhosts),
+                                                      self.vmhosts_job[0],
+                                                      ' '.join(vmhosts)))
         servers = [s.address for s in g5k.get_oar_job_nodes(*self.server_job)]
-        logger.debug("{} servers [job {}]: {}".format(len(servers),
-                                                      self.server_job[0],
-                                                      ' '.join(servers)))
+        logger.info("{} servers [job {}]: {}".format(len(servers),
+                                                     self.server_job[0],
+                                                     ' '.join(servers)))
 
     def log_output(self, task, task_name):
         logger.debug("Logging stdout/stderr of task {} ({} processes)".format(task_name, len(task.processes)))
