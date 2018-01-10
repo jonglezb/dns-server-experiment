@@ -16,6 +16,7 @@ time experienced by clients (DNS queries), and the load on the server.
 
 import argparse
 import time
+import datetime
 import os
 import sys
 import re
@@ -112,6 +113,8 @@ class DNSServerExperiment(engine.Engine):
                             help='Memory in MB to allocate to each VM (default: %(default)s)')
         self.args_parser.add_argument('--walltime', '-t', type=int,
                             help='How much time the reservations should last, in seconds.  Unused if -j, -J and -S are passed.')
+        self.args_parser.add_argument('--random-seed', '-s', type=int,
+                            help='Random seed for tcpclient, for reproducibility (default: current date)')
         self.args_parser.add_argument('--client-duration', '-T', type=int, required=True,
                             help='Duration, in seconds, for which to run the TCP clients')
         self.args_parser.add_argument('--client-query-rate', '-Q', type=int, required=True,
@@ -122,6 +125,10 @@ class DNSServerExperiment(engine.Engine):
                             help='Number of TCP connections opened by each client (VM)')
 
     def init(self):
+        # Initialise random seed if not passed as argument
+        if self.args.random_seed == None:
+            now = datetime.datetime.timestamp(datetime.datetime.now())
+            self.args.random_seed = int(now)
         ## Physical machines
         # OAR job for VM hosts, represented as (oarjob ID, frontend)
         self.vmhosts_job = None
@@ -356,7 +363,10 @@ EOF
 
     def start_tcpclient_vm(self):
         """Start tcpclient on all VM"""
-        script = "/root/tcpscaler/tcpclient -t {} -R -p 53 -r {} -c {} -n {} {}"
+        # Create a different random seed for each tcpclient, but
+        # deterministically based on the global seed.
+        random_seed = [self.args.random_seed + vm_id for vm_id, vm in enumerate(self.vm)]
+        script = "/root/tcpscaler/tcpclient -s {{{{random_seed}}}} -t {} -R -p 53 -r {} -c {} -n {} {}"
         script = script.format(self.args.client_duration,
                                self.args.client_query_rate,
                                self.args.client_connections,
@@ -366,6 +376,7 @@ EOF
         return task
 
     def log_experimental_conditions(self):
+        logger.info("Random seed: {}".format(self.args.random_seed))
         logger.info("Subnet [job {}]: {}".format(self.subnet_job[0],
                                                  self.subnet))
         vmhosts = [s.address for s in g5k.get_oar_job_nodes(*self.vmhosts_job)]
