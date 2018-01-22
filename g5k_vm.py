@@ -281,7 +281,7 @@ git pull || rc=$?
 make -j8 || rc=$?
 
 # Install CPUNetLog
-apt install python3 python3-psutil python3-netifaces
+apt-get --yes install python3 python3-psutil python3-netifaces
 cd /root/
 git clone https://github.com/jonglezb/CPUnetLOG || rc=$?
 exit $rc
@@ -465,7 +465,7 @@ EOF
                 clients.wait()
                 logger.info("tcpclient finished!")
                 logger.info("Writing cpunetlog output to disk.")
-                cpunetlog_server.kill().wait()
+                cpunetlog_server.kill(sig=2).wait()
                 self.log_output(cpunetlog_server, "cpunetlog_server")
                 logger.info("writing tcpclient results to disk.")
                 self.log_output(clients, "clients")
