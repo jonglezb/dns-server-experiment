@@ -291,11 +291,15 @@ exit $rc
                             name="Setup server").start()
         return task
 
-    def start_cpunetlog(self, hosts, conn_params):
+    def start_cpunetlog(self, hosts, conn_params=None):
         script = """/root/CPUnetLOG/__init__.py --stdout"""
-        task = execo.Remote(script, hosts,
-                            connection_params=conn_params,
-                            name="CPUnetLOG").start()
+        if conn_params == None:
+            task = execo.Remote(script, hosts,
+                                name="CPUnetLOG").start()
+        else:
+            task = execo.Remote(script, hosts,
+                                connection_params=conn_params,
+                                name="CPUnetLOG").start()
         return task
 
     def wait_until_vm_ready(self):
@@ -329,6 +333,12 @@ sysctl net.ipv4.tcp_tw_reuse=1 || rc=$?
 # No connection tracking
 iptables -t raw -A PREROUTING -p tcp -j NOTRACK || rc=$?
 iptables -t raw -A OUTPUT -p tcp -j NOTRACK || rc=$?
+
+# Install CPUNetLog
+cd /root/
+apt-get --yes install python3 python3-psutil python3-netifaces || rc=$?
+git clone https://github.com/jonglezb/CPUnetLOG || rc=$?
+
 exit $rc
         """.format(server_name=self.server.address)
         task = execo.Remote(script, self.vm, name="Setup VM").start()
@@ -455,6 +465,7 @@ EOF
                     raise Exception
                 logger.debug("Prepared VM")
                 logger.info("Started {} VMs.".format(len(self.vm)))
+                cpunetlog_vms = self.start_cpunetlog(self.vm)
                 cpunetlog_server = self.start_cpunetlog([self.server], self.server_conn_params)
                 unbound = self.start_dns_server()
                 logger.info("Started unbound on {}.".format(self.server.address))
@@ -466,7 +477,9 @@ EOF
                 logger.info("tcpclient finished!")
                 logger.info("Writing cpunetlog output to disk.")
                 cpunetlog_server.kill(sig=2).wait()
+                cpunetlog_vms.kill(sig=2).wait()
                 self.log_output(cpunetlog_server, "cpunetlog_server")
+                self.log_output(cpunetlog_vms, "cpunetlog_vms")
                 logger.info("writing tcpclient results to disk.")
                 self.log_output(clients, "clients")
                 with open(rtt_file, 'w') as rtt_output:
