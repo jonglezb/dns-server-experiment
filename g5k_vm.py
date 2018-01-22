@@ -279,11 +279,23 @@ echo 20000000 > /proc/sys/fs/nr_open || rc=$?
 cd /root/unbound || rc=$?
 git pull || rc=$?
 make -j8 || rc=$?
+
+# Install CPUNetLog
+apt install python3 python3-psutil python3-netifaces
+cd /root/
+git clone https://github.com/jonglezb/CPUnetLOG || rc=$?
 exit $rc
         """.format(vm_subnet=self.subnet)
         task = execo.Remote(script, [self.server],
                             connection_params=self.server_conn_params,
                             name="Setup server").start()
+        return task
+
+    def start_cpunetlog(self, hosts, conn_params):
+        script = """/root/CPUnetLOG/__init__.py --stdout"""
+        task = execo.Remote(script, hosts,
+                            connection_params=conn_params,
+                            name="CPUnetLOG").start()
         return task
 
     def wait_until_vm_ready(self):
@@ -443,6 +455,7 @@ EOF
                     raise Exception
                 logger.debug("Prepared VM")
                 logger.info("Started {} VMs.".format(len(self.vm)))
+                cpunetlog_server = self.start_cpunetlog([self.server], self.server_conn_params)
                 unbound = self.start_dns_server()
                 logger.info("Started unbound on {}.".format(self.server.address))
                 # Leave time for unbound to start
@@ -450,7 +463,11 @@ EOF
                 logger.info("Starting tcpclient on all VMs...")
                 clients = self.start_tcpclient_vm()
                 clients.wait()
-                logger.info("tcpclient finished, writing performance results to disk.")
+                logger.info("tcpclient finished!")
+                logger.info("Writing cpunetlog output to disk.")
+                cpunetlog_server.kill().wait()
+                self.log_output(cpunetlog_server, "cpunetlog_server")
+                logger.info("writing tcpclient results to disk.")
                 self.log_output(clients, "clients")
                 with open(rtt_file, 'w') as rtt_output:
                     rtt = csv.writer(rtt_output)
