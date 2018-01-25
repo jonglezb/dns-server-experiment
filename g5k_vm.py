@@ -283,7 +283,9 @@ make -j8 || rc=$?
 # Install CPUNetLog
 apt-get --yes install python3 python3-psutil python3-netifaces
 cd /root/
-git clone https://github.com/jonglezb/CPUnetLOG || rc=$?
+[ -d "CPUnetLOG" ] || git clone https://github.com/jonglezb/CPUnetLOG || rc=$?
+cd CPUnetLOG || rc=$?
+git pull || rc=$?
 exit $rc
         """.format(vm_subnet=self.subnet)
         task = execo.Remote(script, [self.server],
@@ -337,7 +339,9 @@ iptables -t raw -A OUTPUT -p tcp -j NOTRACK || rc=$?
 # Install CPUNetLog
 cd /root/
 apt-get --yes install python3 python3-psutil python3-netifaces || rc=$?
-git clone https://github.com/jonglezb/CPUnetLOG || rc=$?
+[ -d "CPUnetLOG" ] || git clone https://github.com/jonglezb/CPUnetLOG || rc=$?
+cd CPUnetLOG || rc=$?
+git pull || rc=$?
 
 exit $rc
         """.format(server_name=self.server.address)
