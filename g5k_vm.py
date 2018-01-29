@@ -105,6 +105,8 @@ class DNSServerExperiment(engine.Engine):
                             help='Name of the Kadeploy environment (OS image) to deploy on the server.  Can be a filename or the name of a registered environment.')
         self.args_parser.add_argument('--kadeploy-user', '-u',
                             help='Kadeploy username, used when passing the name of a registered environment as server environment')
+        self.args_parser.add_argument('--server-threads', type=int, default=32,
+                            help='Number of server threads to use for unbound (default: %(default)s)')
         self.args_parser.add_argument('--vm-image', '-i', required=True,
                             help='Path to the qcow2 VM image to use (on the G5K frontend)')
         self.args_parser.add_argument('--nb-vm', '-n', type=int, default=1,
@@ -349,14 +351,13 @@ exit $rc
         return task
 
     def start_dns_server(self):
-        nb_threads = 32
         unbound_params = {
             "buffer_size": 4096,
-            "nb_threads": nb_threads,
+            "nb_threads": self.args.server_threads,
             # Add a 5% margin to the number of client slots
-            "max_tcp_clients_per_thread": 500 + int(1.05 * self.args.client_connections * len(self.vm) / nb_threads),
+            "max_tcp_clients_per_thread": 500 + int(1.05 * self.args.client_connections * len(self.vm) / self.args.server_threads),
         }
-        max_clients = nb_threads * unbound_params["max_tcp_clients_per_thread"]
+        max_clients = self.args.server_threads * unbound_params["max_tcp_clients_per_thread"]
         logger.debug("Unbound using {nb_threads} threads, {max_tcp_clients_per_thread} max clients per thread, {buffer_size}b buffer size".format(**unbound_params))
         logger.debug("Max clients: {}k".format(max_clients // 1000))
         unbound_config = """\
