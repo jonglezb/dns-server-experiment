@@ -97,6 +97,8 @@ class DNSServerExperiment(engine.Engine):
                             help='Number of physical machines to reserve on the cluster to run VMs (default: %(default)s).  Unused if -j is passed.')
         self.args_parser.add_argument('--start-date', '-r',
                             help='Start OAR jobs at the given date, instead of right now')
+        self.args_parser.add_argument('--container-job',
+                            help='Run all OAR jobs inside the given container job ID')
         self.args_parser.add_argument('--vmhosts-job-id', '-j', type=int,
                             help='Instead of making a reservation for VM hosts, use an existing OAR job ID')
         self.args_parser.add_argument('--server-job-id', '-J', type=int,
@@ -166,8 +168,13 @@ class DNSServerExperiment(engine.Engine):
             self.subnet_job = (self.args.subnet_job_id, None)
             return
         # New job
+        if self.args.container_job != None:
+            job_type = "inner={}".format(self.args.container_job)
+        else:
+            job_type = None
         submission = g5k.OarSubmission(resources="slash_22=1", name="VM subnet",
                                        reservation_date=self.args.start_date,
+                                       job_type=job_type,
                                        walltime=self.args.walltime)
         [(jobid, site)] = g5k.oarsub([(submission , None)])
         self.subnet_job = (jobid, site)
@@ -178,6 +185,10 @@ class DNSServerExperiment(engine.Engine):
             self.vmhosts_job = (self.args.vmhosts_job_id, None)
             return
         # New job
+        if self.args.container_job != None:
+            job_type = "inner={}".format(self.args.container_job)
+        else:
+            job_type = None
         if self.args.cluster:
             resources = "{{cluster='{}'}}/switch=1/nodes={}".format(self.args.cluster,
                                                                     self.args.nb_hosts)
@@ -185,6 +196,7 @@ class DNSServerExperiment(engine.Engine):
             resources = "switch=1/nodes={}".format(self.args.nb_hosts)
         submission = g5k.OarSubmission(resources=resources, name="VM hosts",
                                        reservation_date=self.args.start_date,
+                                       job_type=job_type,
                                        walltime=self.args.walltime)
         [(jobid, site)] = g5k.oarsub([(submission , None)])
         self.vmhosts_job = (jobid, site)
@@ -195,14 +207,18 @@ class DNSServerExperiment(engine.Engine):
             self.server_job = (self.args.server_job_id, None)
             return
         # New job
+        if self.args.container_job != None:
+            job_type = ["deploy", "inner={}".format(self.args.container_job)]
+        else:
+            job_type = "deploy"
         if self.args.cluster:
             resources = "{{cluster='{}'}}/switch=1/nodes=1".format(self.args.cluster)
         else:
             resources = "switch=1/nodes=1"
         submission = g5k.OarSubmission(resources=resources, name="Server",
                                        reservation_date=self.args.start_date,
-                                       walltime=self.args.walltime,
-                                       job_type="deploy")
+                                       job_type=job_type,
+                                       walltime=self.args.walltime)
         [(jobid, site)] = g5k.oarsub([(submission , None)])
         self.server_job = (jobid, site)
 
