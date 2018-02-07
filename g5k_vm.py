@@ -95,6 +95,8 @@ class DNSServerExperiment(engine.Engine):
                             help='Which Grid5000 cluster to use (defaut: any cluster).  Unused if -j and -J are passed.')
         self.args_parser.add_argument('--nb-hosts', '-N', type=int, default=2,
                             help='Number of physical machines to reserve on the cluster to run VMs (default: %(default)s).  Unused if -j is passed.')
+        self.args_parser.add_argument('--start-date', '-r',
+                            help='Start OAR jobs at the given date, instead of right now')
         self.args_parser.add_argument('--vmhosts-job-id', '-j', type=int,
                             help='Instead of making a reservation for VM hosts, use an existing OAR job ID')
         self.args_parser.add_argument('--server-job-id', '-J', type=int,
@@ -165,6 +167,7 @@ class DNSServerExperiment(engine.Engine):
             return
         # New job
         submission = g5k.OarSubmission(resources="slash_22=1", name="VM subnet",
+                                       reservation_date=self.args.start_date,
                                        walltime=self.args.walltime)
         [(jobid, site)] = g5k.oarsub([(submission , None)])
         self.subnet_job = (jobid, site)
@@ -181,6 +184,7 @@ class DNSServerExperiment(engine.Engine):
         else:
             resources = "switch=1/nodes={}".format(self.args.nb_hosts)
         submission = g5k.OarSubmission(resources=resources, name="VM hosts",
+                                       reservation_date=self.args.start_date,
                                        walltime=self.args.walltime)
         [(jobid, site)] = g5k.oarsub([(submission , None)])
         self.vmhosts_job = (jobid, site)
@@ -196,6 +200,7 @@ class DNSServerExperiment(engine.Engine):
         else:
             resources = "switch=1/nodes=1"
         submission = g5k.OarSubmission(resources=resources, name="Server",
+                                       reservation_date=self.args.start_date,
                                        walltime=self.args.walltime,
                                        job_type="deploy")
         [(jobid, site)] = g5k.oarsub([(submission , None)])
