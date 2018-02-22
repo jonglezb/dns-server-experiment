@@ -436,7 +436,7 @@ EOF
                                                      self.server_job[0],
                                                      ' '.join(servers)))
 
-    def log_output(self, task, task_name):
+    def log_output(self, task, task_name, log_stdout=True, log_stderr=True):
         logger.debug("Logging stdout/stderr of task {} ({} processes)".format(task_name, len(task.processes)))
         for process_id, process in enumerate(task.processes):
             if len(task.processes) > 1:
@@ -445,10 +445,12 @@ EOF
             else:
                 stdout_file = self.result_dir + "/{}_stdout".format(task_name)
                 stderr_file = self.result_dir + "/{}_stderr".format(task_name)
-            with open(stdout_file, 'w') as stdout:
-                stdout.write(process.stdout)
-            with open(stderr_file, 'w') as stderr:
-                stderr.write(process.stderr)
+            if log_stdout:
+                with open(stdout_file, 'w') as stdout:
+                    stdout.write(process.stdout)
+            if log_stderr:
+                with open(stderr_file, 'w') as stderr:
+                    stderr.write(process.stderr)
 
     def run(self):
         rtt_file = self.result_dir + "/rtt.csv"
@@ -507,7 +509,7 @@ EOF
                 self.log_output(cpunetlog_server, "cpunetlog_server")
                 self.log_output(cpunetlog_vms, "cpunetlog_vms")
                 logger.info("writing tcpclient results to disk.")
-                self.log_output(clients, "clients")
+                self.log_output(clients, "clients", log_stdout=False)
                 with open(rtt_file, 'w') as rtt_output:
                     need_header = True
                     rtt = csv.writer(rtt_output)
