@@ -509,14 +509,27 @@ EOF
                 logger.info("writing tcpclient results to disk.")
                 self.log_output(clients, "clients")
                 with open(rtt_file, 'w') as rtt_output:
+                    need_header = True
                     rtt = csv.writer(rtt_output)
-                    rtt.writerow(["VM_ID", "connection_ID", "answer_timestamp", "RTT_us"])
                     for client_id, client in enumerate(clients.processes):
+                        first_line = True
                         for line in iter(client.stdout.splitlines()):
-                            if re.match(r"[0-9]", line):
-                                # Expect: connection ID, timestamp, RTT
+                            if need_header:
+                                # Take CSV header from first client and add a column
                                 data = line.split(",")
-                                rtt.writerow([client_id, int(data[0]), float(data[1]), int(data[2])])
+                                data.insert(0, "vm_id")
+                                rtt.writerow(data)
+                                need_header = False
+                                first_line = False
+                            elif first_line:
+                                # Skip first line of subsequent clients
+                                first_line = False
+                            else:
+                                # Add column with VM ID
+                                data = line.split(",")
+                                data.insert(0, client_id)
+                                rtt.writerow(data)
+
         except Exception as e:
             logger.error("Exception raised: {}\n{}".format(e, format_exc()))
         finally:
