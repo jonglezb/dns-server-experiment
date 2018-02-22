@@ -234,6 +234,13 @@ class DNSServerExperiment(engine.Engine):
 # Avoid conntrack on all machines
 sudo-g5k iptables -t raw -A PREROUTING -p tcp -j NOTRACK
 sudo-g5k iptables -t raw -A OUTPUT -p tcp -j NOTRACK
+
+# Create br0 if it does not yet exist
+ip link show dev br0 || {
+  sudo-g5k brctl addbr br0
+  sudo-g5k brctl addif br0 eth1
+  sudo-g5k ip link set br0 up
+}
         """
         task = execo.Remote(script,
                             self.vm_hosts,
