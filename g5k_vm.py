@@ -463,16 +463,16 @@ EOF
         rtt_file = self.result_dir + "/rtt.csv"
         unbound = None
         try:
-            self.reserve_subnet()
             self.reserve_vmhosts()
+            logger.debug("Waiting for VM hosts job to start...")
+            g5k.wait_oar_job_start(*self.vmhosts_job)
             self.reserve_server()
+            logger.debug("Waiting for server job to start...")
+            g5k.wait_oar_job_start(*self.server_job)
+            self.reserve_subnet()
             g5k.wait_oar_job_start(*self.subnet_job)
             self.prepare_subnet()
             logger.debug("Prepared subnet")
-            logger.debug("Waiting for VM hosts job to start...")
-            g5k.wait_oar_job_start(*self.vmhosts_job)
-            logger.debug("Waiting for server job to start...")
-            g5k.wait_oar_job_start(*self.server_job)
             self.log_experimental_conditions()
             logger.debug("Setting up VM hosts...")
             machines_setup_process = self.prepare_vmhosts()
