@@ -505,7 +505,10 @@ EOF
                 unbound = self.start_dns_server()
                 logger.info("Started unbound on {}.".format(self.server.address))
                 # Leave time for unbound to start
-                execo.sleep(90)
+                if self.args.client_connections * len(self.vm) < 1000000:
+                    execo.sleep(15)
+                else:
+                    execo.sleep(60)
                 logger.info("Starting tcpclient on all VMs...")
                 clients = self.start_tcpclient_vm()
                 clients.wait()
