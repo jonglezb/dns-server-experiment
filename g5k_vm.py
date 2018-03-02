@@ -129,12 +129,17 @@ class DNSServerExperiment(engine.Engine):
                             help='Number of new connections per second that each client (VM) will open')
         self.args_parser.add_argument('--client-connections', '-C', type=int, required=True,
                             help='Number of TCP connections opened by each client (VM)')
+        self.args_parser.add_argument('--unbound-slots-per-thread', type=int,
+                            help='Sets the number of client slots to allocate per unbound thread (by default, a reasonable value is computed)')
 
     def init(self):
         # Initialise random seed if not passed as argument
         if self.args.random_seed == None:
             now = datetime.datetime.timestamp(datetime.datetime.now())
             self.args.random_seed = int(now)
+        # Compute number of unbound slots if not set
+        if self.args.unbound_slots_per_thread == None:
+            self.args.unbound_slots_per_thread = 500 + int(1.05 * self.args.client_connections * self.args.nb_hosts * self.args.nb_vm / self.args.server_threads)
         ## Physical machines
         # OAR job for VM hosts, represented as (oarjob ID, frontend)
         self.vmhosts_job = None
@@ -383,11 +388,11 @@ exit $rc
             "buffer_size": 4096,
             "nb_threads": self.args.server_threads,
             # Add a 5% margin to the number of client slots
-            "max_tcp_clients_per_thread": 500 + int(1.05 * self.args.client_connections * len(self.vm) / self.args.server_threads),
+            "max_tcp_clients_per_thread": self.args.unbound_slots_per_thread,
         }
-        max_clients = self.args.server_threads * unbound_params["max_tcp_clients_per_thread"]
+        max_clients = self.args.server_threads * self.args.unbound_slots_per_thread
         logger.debug("Unbound using {nb_threads} threads, {max_tcp_clients_per_thread} max clients per thread, {buffer_size}b buffer size".format(**unbound_params))
-        logger.debug("Max clients: {}k".format(max_clients // 1000))
+        logger.debug("Max clients: {}".format(max_clients))
         unbound_config = """\
 cat > /tmp/unbound.conf <<EOF
 server:
@@ -505,7 +510,7 @@ EOF
                 unbound = self.start_dns_server()
                 logger.info("Started unbound on {}.".format(self.server.address))
                 # Leave time for unbound to start
-                if self.args.client_connections * len(self.vm) < 1000000:
+                if self.args.unbound_slots_per_thread < 1000000:
                     execo.sleep(15)
                 else:
                     execo.sleep(60)
