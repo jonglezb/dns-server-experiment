@@ -482,6 +482,7 @@ EOF
         unbound = None
         client = 'tcpclient' if self.args.mode == 'tcp' else 'udpclient'
         try:
+            logger.debug("Experiment ID: {}".format(self.exp_id))
             self.reserve_vmhosts()
             logger.debug("Waiting for VM hosts job to start...")
             g5k.wait_oar_job_start(*self.vmhosts_job)
