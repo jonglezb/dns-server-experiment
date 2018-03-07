@@ -184,7 +184,7 @@ class DNSServerExperiment(engine.Engine):
             job_type = "inner={}".format(self.args.container_job)
         else:
             job_type = None
-        submission = g5k.OarSubmission(resources="slash_22=1", name="VM subnet {}".format(self.exp_id),
+        submission = g5k.OarSubmission(resources="slash_22=1", name="Subnet {}".format(self.exp_id),
                                        reservation_date=self.args.start_date,
                                        job_type=job_type,
                                        walltime=self.args.walltime)
