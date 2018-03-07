@@ -91,6 +91,8 @@ class DNSServerExperiment(engine.Engine):
     def __init__(self):
         super(DNSServerExperiment, self).__init__()
         ## Parse command-line arguments
+        self.args_parser.add_argument('--mode', choices=['udp', 'tcp'], default='tcp',
+                            help='Whether to run in UDP or TCP mode (default: %(default)s)')
         self.args_parser.add_argument('--cluster',
                             help='Which Grid5000 cluster to use (defaut: any cluster).  Unused if -j and -J are passed.')
         self.args_parser.add_argument('--nb-hosts', '-N', type=int, default=2,
@@ -120,17 +122,17 @@ class DNSServerExperiment(engine.Engine):
         self.args_parser.add_argument('--walltime', '-t', type=int,
                             help='How much time the reservations should last, in seconds.  Unused if -j, -J and -S are passed.')
         self.args_parser.add_argument('--random-seed', '-s', type=int,
-                            help='Random seed for tcpclient, for reproducibility (default: current date)')
+                            help='Random seed for tcpclient/udpclient, for reproducibility (default: current date)')
         self.args_parser.add_argument('--client-duration', '-T', type=int, required=True,
-                            help='Duration, in seconds, for which to run the TCP clients')
+                            help='Duration, in seconds, for which to run the TCP or UDP clients')
         self.args_parser.add_argument('--client-query-rate', '-Q', type=int, required=True,
                             help='Number of queries per second for each client (VM)')
         self.args_parser.add_argument('--client-connection-rate', '-q', type=int, required=True,
                             help='Number of new connections per second that each client (VM) will open')
         self.args_parser.add_argument('--client-connections', '-C', type=int, required=True,
-                            help='Number of TCP connections opened by each client (VM)')
+                            help='Number of TCP or UDP connections opened by each client (VM)')
         self.args_parser.add_argument('--unbound-slots-per-thread', type=int,
-                            help='Sets the number of client slots to allocate per unbound thread (by default, a reasonable value is computed)')
+                            help='Sets the number of client slots to allocate per unbound thread (by default, a reasonable value is computed in TCP mode)')
 
     def init(self):
         # Initialise random seed if not passed as argument
@@ -140,6 +142,9 @@ class DNSServerExperiment(engine.Engine):
         # Compute number of unbound slots if not set
         if self.args.unbound_slots_per_thread == None:
             self.args.unbound_slots_per_thread = 500 + int(1.05 * self.args.client_connections * self.args.nb_hosts * self.args.nb_vm / self.args.server_threads)
+        # Don't use any TCP slots in UDP mode
+        if self.args.mode == 'udp':
+            self.args.unbound_slots_per_thread = 0
         ## Physical machines
         # OAR job for VM hosts, represented as (oarjob ID, frontend)
         self.vmhosts_job = None
@@ -238,7 +243,9 @@ class DNSServerExperiment(engine.Engine):
         script = """\
 # Avoid conntrack on all machines
 sudo-g5k iptables -t raw -A PREROUTING -p tcp -j NOTRACK
+sudo-g5k iptables -t raw -A PREROUTING -p udp -j NOTRACK
 sudo-g5k iptables -t raw -A OUTPUT -p tcp -j NOTRACK
+sudo-g5k iptables -t raw -A OUTPUT -p udp -j NOTRACK
 
 # Create br0 if it does not yet exist
 ip link show dev br0 || {
@@ -369,7 +376,9 @@ sysctl net.ipv4.tcp_tw_reuse=1 || rc=$?
 
 # No connection tracking
 iptables -t raw -A PREROUTING -p tcp -j NOTRACK || rc=$?
+iptables -t raw -A PREROUTING -p udp -j NOTRACK || rc=$?
 iptables -t raw -A OUTPUT -p tcp -j NOTRACK || rc=$?
+iptables -t raw -A OUTPUT -p udp -j NOTRACK || rc=$?
 
 # Install CPUNetLog
 cd /root/
@@ -387,12 +396,11 @@ exit $rc
         unbound_params = {
             "buffer_size": 4096,
             "nb_threads": self.args.server_threads,
-            # Add a 5% margin to the number of client slots
             "max_tcp_clients_per_thread": self.args.unbound_slots_per_thread,
         }
         max_clients = self.args.server_threads * self.args.unbound_slots_per_thread
-        logger.debug("Unbound using {nb_threads} threads, {max_tcp_clients_per_thread} max clients per thread, {buffer_size}b buffer size".format(**unbound_params))
-        logger.debug("Max clients: {}".format(max_clients))
+        logger.debug("Unbound using {nb_threads} threads, {max_tcp_clients_per_thread} max TCP clients per thread, {buffer_size}b buffer size".format(**unbound_params))
+        logger.debug("Max TCP clients: {}".format(max_clients))
         unbound_config = """\
 cat > /tmp/unbound.conf <<EOF
 server:
@@ -406,6 +414,7 @@ server:
   incoming-num-tcp: {max_tcp_clients_per_thread}
   num-threads: {nb_threads}
   msg-buffer-size: {buffer_size}
+  so-rcvbuf: 4m
   so-reuseport: yes
   local-zone: example.com static
   local-data: "example.com A 42.42.42.42"
@@ -421,18 +430,20 @@ EOF
                             name="Unbound server process").start()
         return task
 
-    def start_tcpclient_vm(self):
-        """Start tcpclient on all VM"""
-        # Create a different random seed for each tcpclient, but
+    def start_client_vm(self):
+        """Start tcpclient or udpclient on all VM"""
+        client = 'tcpclient' if self.args.mode == 'tcp' else 'udpclient'
+        # Create a different random seed for each client, but
         # deterministically based on the global seed.
         random_seed = [self.args.random_seed + vm_id for vm_id, vm in enumerate(self.vm)]
-        script = "/root/tcpscaler/tcpclient -s {{{{random_seed}}}} -t {} -R -p 53 -r {} -c {} -n {} {}"
-        script = script.format(self.args.client_duration,
+        script = "/root/tcpscaler/{} -s {{{{random_seed}}}} -t {} -R -p 53 -r {} -c {} -n {} {}"
+        script = script.format(client,
+                               self.args.client_duration,
                                self.args.client_query_rate,
                                self.args.client_connections,
                                self.args.client_connection_rate,
                                self.server.address)
-        task = execo.Remote(script, self.vm, name="tcpclient").start()
+        task = execo.Remote(script, self.vm, name=client).start()
         return task
 
     def log_experimental_conditions(self):
@@ -467,6 +478,7 @@ EOF
     def run(self):
         rtt_file = self.result_dir + "/rtt.csv"
         unbound = None
+        client = 'tcpclient' if self.args.mode == 'tcp' else 'udpclient'
         try:
             self.reserve_vmhosts()
             logger.debug("Waiting for VM hosts job to start...")
@@ -514,16 +526,16 @@ EOF
                     execo.sleep(15)
                 else:
                     execo.sleep(60)
-                logger.info("Starting tcpclient on all VMs...")
-                clients = self.start_tcpclient_vm()
+                logger.info("Starting {} on all VMs...".format(client))
+                clients = self.start_client_vm()
                 clients.wait()
-                logger.info("tcpclient finished!")
+                logger.info("{} finished!".format(client))
                 logger.info("Writing cpunetlog output to disk.")
                 cpunetlog_server.kill(sig=2).wait()
                 cpunetlog_vms.kill(sig=2).wait()
                 self.log_output(cpunetlog_server, "cpunetlog_server")
                 self.log_output(cpunetlog_vms, "cpunetlog_vms")
-                logger.info("writing tcpclient results to disk.")
+                logger.info("writing {} results to disk.".format(client))
                 self.log_output(clients, "clients", log_stdout=False)
                 with open(rtt_file, 'w') as rtt_output:
                     need_header = True
