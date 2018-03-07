@@ -139,6 +139,8 @@ class DNSServerExperiment(engine.Engine):
         if self.args.random_seed == None:
             now = datetime.datetime.timestamp(datetime.datetime.now())
             self.args.random_seed = int(now)
+        # "Experiment ID", used in OAR job names
+        self.exp_id = "{}".format(self.args.random_seed)[-5:]
         # Compute number of unbound slots if not set
         if self.args.unbound_slots_per_thread == None:
             self.args.unbound_slots_per_thread = 500 + int(1.05 * self.args.client_connections * self.args.nb_hosts * self.args.nb_vm / self.args.server_threads)
@@ -182,7 +184,7 @@ class DNSServerExperiment(engine.Engine):
             job_type = "inner={}".format(self.args.container_job)
         else:
             job_type = None
-        submission = g5k.OarSubmission(resources="slash_22=1", name="VM subnet",
+        submission = g5k.OarSubmission(resources="slash_22=1", name="VM subnet {}".format(self.exp_id),
                                        reservation_date=self.args.start_date,
                                        job_type=job_type,
                                        walltime=self.args.walltime)
@@ -204,7 +206,7 @@ class DNSServerExperiment(engine.Engine):
                                                                     self.args.nb_hosts)
         else:
             resources = "switch=1/nodes={}".format(self.args.nb_hosts)
-        submission = g5k.OarSubmission(resources=resources, name="VM hosts",
+        submission = g5k.OarSubmission(resources=resources, name="VM hosts {}".format(self.exp_id),
                                        reservation_date=self.args.start_date,
                                        job_type=job_type,
                                        walltime=self.args.walltime)
@@ -225,7 +227,7 @@ class DNSServerExperiment(engine.Engine):
             resources = "{{cluster='{}'}}/switch=1/nodes=1".format(self.args.cluster)
         else:
             resources = "switch=1/nodes=1"
-        submission = g5k.OarSubmission(resources=resources, name="Server",
+        submission = g5k.OarSubmission(resources=resources, name="Server {}".format(self.exp_id),
                                        reservation_date=self.args.start_date,
                                        job_type=job_type,
                                        walltime=self.args.walltime)
