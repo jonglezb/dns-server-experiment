@@ -93,8 +93,10 @@ class DNSServerExperiment(engine.Engine):
         ## Parse command-line arguments
         self.args_parser.add_argument('--mode', choices=['udp', 'tcp'], default='tcp',
                             help='Whether to run in UDP or TCP mode (default: %(default)s)')
-        self.args_parser.add_argument('--cluster',
-                            help='Which Grid5000 cluster to use (defaut: any cluster).  Unused if -j and -J are passed.')
+        self.args_parser.add_argument('--vmhosts-cluster',
+                            help='Which Grid5000 cluster to use for the VM hosts (default: any cluster).  Unused if -j is passed.')
+        self.args_parser.add_argument('--server-cluster',
+                            help='Which Grid5000 cluster to use for the server (default: any cluster).  Unused if -J is passed.')
         self.args_parser.add_argument('--nb-hosts', '-N', type=int, default=2,
                             help='Number of physical machines to reserve on the cluster to run VMs (default: %(default)s).  Unused if -j is passed.')
         self.args_parser.add_argument('--start-date', '-r',
@@ -201,8 +203,8 @@ class DNSServerExperiment(engine.Engine):
             job_type = "inner={}".format(self.args.container_job)
         else:
             job_type = None
-        if self.args.cluster:
-            resources = "{{cluster='{}'}}/switch=1/nodes={}".format(self.args.cluster,
+        if self.args.vmhosts_cluster:
+            resources = "{{cluster='{}'}}/switch=1/nodes={}".format(self.args.vmhosts_cluster,
                                                                     self.args.nb_hosts)
         else:
             resources = "switch=1/nodes={}".format(self.args.nb_hosts)
@@ -223,8 +225,8 @@ class DNSServerExperiment(engine.Engine):
             job_type = ["deploy", "inner={}".format(self.args.container_job)]
         else:
             job_type = "deploy"
-        if self.args.cluster:
-            resources = "{{cluster='{}'}}/switch=1/nodes=1".format(self.args.cluster)
+        if self.args.server_cluster:
+            resources = "{{cluster='{}'}}/switch=1/nodes=1".format(self.args.server_cluster)
         else:
             resources = "switch=1/nodes=1"
         submission = g5k.OarSubmission(resources=resources, name="Server {}".format(self.exp_id),
