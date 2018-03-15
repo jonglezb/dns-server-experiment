@@ -165,6 +165,8 @@ class DNSServerExperiment(engine.Engine):
         self.server_conn_params = execo.default_connection_params
         self.server_conn_params.update({'user': 'root'})
         ## Network
+        # Global VLAN for multisite experiment
+        self.global_vlan = None
         # OAR job for subnet, represented as (oarjob ID, frontend)
         self.subnet_job = None
         # Subnet used by the VMs (as CIDR)
@@ -179,6 +181,29 @@ class DNSServerExperiment(engine.Engine):
         self.vm = []
         # Process that runs all VMs, as a "Remote" instance
         self.vm_process = None
+
+    def multi_site(self):
+        if self.args.vmhosts_site == None and self.args.server_site == None:
+            return False
+        return self.args.vmhosts_site != self.args.server_site
+
+    def reserve_global_vlan(self):
+        """Global VLAN, only used for multi-site experiment (server not on the
+        same site as the VM)"""
+        # Existing job, look in all currently running jobs
+        for (job_id, frontend) in g5k.get_current_oar_jobs():
+            vlans = g5k.get_oar_job_kavlan(job_id, frontend)
+            if len(vlans) > 0:
+                logger.debug("Found existing Kavlan job {} (VLAN ID: {})".format(job_id, vlans[0]))
+                self.globalvlan_job = (job_id, frontend)
+                return
+        # New job
+        submission = g5k.OarSubmission(resources="{{type='kavlan-global'}}/vlan=1",
+                                       name="VLAN {}".format(self.exp_id),
+                                       reservation_date=self.args.start_date,
+                                       walltime=self.args.walltime)
+        [(jobid, site)] = g5k.oarsub([(submission, None)])
+        self.globalvlan_job = (jobid, site)
 
     def reserve_subnet(self):
         # Existing job
@@ -240,6 +265,15 @@ class DNSServerExperiment(engine.Engine):
         [(jobid, site)] = g5k.oarsub([(submission, self.args.server_site)])
         self.server_job = (jobid, site)
 
+    def prepare_global_vlan(self):
+        vlans = g5k.get_oar_job_kavlan(*self.globalvlan_job)
+        if len(vlans) > 0:
+            self.global_vlan = vlans[0]
+            logger.debug("Global VLAN ID: {}".format(self.global_vlan))
+        else:
+            logger.error("Could not reserve global VLAN")
+            sys.exit(1)
+
     def prepare_subnet(self):
         # subnet_params is a dict: http://execo.gforge.inria.fr/doc/latest-stable/execo_g5k.html#get-oar-job-subnets
         (ip_mac_list, subnet_params) = g5k.get_oar_job_subnets(*self.subnet_job)
@@ -300,16 +334,22 @@ wait
         # are part of the OAR job, this ensures we always pick the same one.
         self.server = sorted(g5k.get_oar_job_nodes(*self.server_job), key=lambda node: node.address)[0]
         if os.path.isfile(self.args.server_env):
-            d = g5k.Deployment([self.server], env_file=self.args.server_env)
+            deploy_opts = {"env_file": self.args.server_env}
         else:
-            d = g5k.Deployment([self.server], env_name=self.args.server_env,
-                           user=self.args.kadeploy_user)
+            deploy_opts = {"env_name": self.args.server_env,
+                           "user": self.args.kadeploy_user}
+        if self.multi_site():
+            deploy_opts["vlan"] = self.global_vlan
+        d = g5k.Deployment([self.server], **deploy_opts)
         logger.debug("Deploying environment '{}' on server {}...".format(self.args.server_env,
                                                                          self.server.address))
         deployed, undeployed = g5k.kadeploy.deploy(d)
         if len(deployed) == 0:
             logger.error("Could not deploy server")
             sys.exit(1)
+        if self.multi_site():
+            logger.debug("Deployed, transforming {} into {}".format(self.server.address, g5k.get_kavlan_host_name(self.server.address, self.global_vlan)))
+            self.server.address = g5k.get_kavlan_host_name(self.server.address, self.global_vlan)
 
     def prepare_server(self):
         # Server is already deployed
@@ -489,6 +529,8 @@ EOF
         client = 'tcpclient' if self.args.mode == 'tcp' else 'udpclient'
         try:
             logger.debug("Experiment ID: {}".format(self.exp_id))
+            if self.multi_site():
+                logger.info("Running in multi-site mode")
             self.reserve_vmhosts()
             logger.debug("Waiting for VM hosts job to start...")
             g5k.wait_oar_job_start(*self.vmhosts_job)
@@ -499,6 +541,11 @@ EOF
             g5k.wait_oar_job_start(*self.subnet_job)
             self.prepare_subnet()
             logger.debug("Prepared subnet")
+            if self.multi_site():
+                self.reserve_global_vlan()
+                g5k.wait_oar_job_start(*self.globalvlan_job)
+                logger.debug("Waiting for global VLAN job to start...")
+                self.prepare_global_vlan()
             self.log_experimental_conditions()
             logger.debug("Setting up VM hosts...")
             machines_setup_process = self.prepare_vmhosts()
