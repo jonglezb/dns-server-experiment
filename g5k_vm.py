@@ -93,8 +93,12 @@ class DNSServerExperiment(engine.Engine):
         ## Parse command-line arguments
         self.args_parser.add_argument('--mode', choices=['udp', 'tcp'], default='tcp',
                             help='Whether to run in UDP or TCP mode (default: %(default)s)')
+        self.args_parser.add_argument('--vmhosts-site',
+                            help='Which Grid5000 site (i.e. frontend) to use for the VM hosts (default: local site).')
         self.args_parser.add_argument('--vmhosts-cluster',
                             help='Which Grid5000 cluster to use for the VM hosts (default: any cluster).  Unused if -j is passed.')
+        self.args_parser.add_argument('--server-site',
+                            help='Which Grid5000 site (i.e. frontend) to use for the server (default: local site).')
         self.args_parser.add_argument('--server-cluster',
                             help='Which Grid5000 cluster to use for the server (default: any cluster).  Unused if -J is passed.')
         self.args_parser.add_argument('--nb-hosts', '-N', type=int, default=2,
@@ -179,7 +183,7 @@ class DNSServerExperiment(engine.Engine):
     def reserve_subnet(self):
         # Existing job
         if self.args.subnet_job_id:
-            self.subnet_job = (self.args.subnet_job_id, None)
+            self.subnet_job = (self.args.subnet_job_id, self.args.vmhosts_site)
             return
         # New job
         if self.args.container_job != None:
@@ -190,13 +194,13 @@ class DNSServerExperiment(engine.Engine):
                                        reservation_date=self.args.start_date,
                                        job_type=job_type,
                                        walltime=self.args.walltime)
-        [(jobid, site)] = g5k.oarsub([(submission , None)])
+        [(jobid, site)] = g5k.oarsub([(submission, self.args.vmhosts_site)])
         self.subnet_job = (jobid, site)
 
     def reserve_vmhosts(self):
         # Existing job
         if self.args.vmhosts_job_id:
-            self.vmhosts_job = (self.args.vmhosts_job_id, None)
+            self.vmhosts_job = (self.args.vmhosts_job_id, self.args.vmhosts_site)
             return
         # New job
         if self.args.container_job != None:
@@ -212,13 +216,13 @@ class DNSServerExperiment(engine.Engine):
                                        reservation_date=self.args.start_date,
                                        job_type=job_type,
                                        walltime=self.args.walltime)
-        [(jobid, site)] = g5k.oarsub([(submission , None)])
+        [(jobid, site)] = g5k.oarsub([(submission, self.args.vmhosts_site)])
         self.vmhosts_job = (jobid, site)
 
     def reserve_server(self):
         # Existing job
         if self.args.server_job_id:
-            self.server_job = (self.args.server_job_id, None)
+            self.server_job = (self.args.server_job_id, self.args.server_site)
             return
         # New job
         if self.args.container_job != None:
@@ -233,7 +237,7 @@ class DNSServerExperiment(engine.Engine):
                                        reservation_date=self.args.start_date,
                                        job_type=job_type,
                                        walltime=self.args.walltime)
-        [(jobid, site)] = g5k.oarsub([(submission , None)])
+        [(jobid, site)] = g5k.oarsub([(submission, self.args.server_site)])
         self.server_job = (jobid, site)
 
     def prepare_subnet(self):
