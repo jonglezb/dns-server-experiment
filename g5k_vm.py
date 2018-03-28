@@ -531,6 +531,11 @@ EOF
             logger.debug("Experiment ID: {}".format(self.exp_id))
             if self.multi_site():
                 logger.info("Running in multi-site mode")
+            # Dependencies (besides the obvious ones):
+            # - deploy_server depends on prepare_global_vlan
+            # - prepare_server depends on deploy_server
+            # - prepare_server depends on prepare_subnet
+            # - prepare_vm depends on deploy_server
             self.reserve_vmhosts()
             logger.debug("Waiting for VM hosts job to start...")
             g5k.wait_oar_job_start(*self.vmhosts_job)
