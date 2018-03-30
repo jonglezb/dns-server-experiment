@@ -101,6 +101,8 @@ class DNSServerExperiment(engine.Engine):
                             help='Which Grid5000 site (i.e. frontend) to use for the server (default: local site).')
         self.args_parser.add_argument('--server-cluster',
                             help='Which Grid5000 cluster to use for the server (default: any cluster).  Unused if -J is passed.')
+        self.args_parser.add_argument('--cluster',
+                            help='Shortcut for both --server-cluster and --vmhosts-cluster.')
         self.args_parser.add_argument('--nb-hosts', '-N', type=int, default=2,
                             help='Number of physical machines to reserve on the cluster to run VMs (default: %(default)s).  Unused if -j is passed.')
         self.args_parser.add_argument('--start-date', '-r',
@@ -154,6 +156,9 @@ class DNSServerExperiment(engine.Engine):
         if self.args.mode == 'udp':
             self.args.unbound_slots_per_thread = 0
         ## Physical machines
+        # Backwards compatibility
+        if self.args.cluster:
+            self.args.server_cluster = self.args.vmhosts_cluster = self.args.cluster
         # OAR job for VM hosts, represented as (oarjob ID, frontend)
         self.vmhosts_job = None
         # List of machines (execo.host.Host) to be used to host VMs
