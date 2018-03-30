@@ -28,6 +28,8 @@ import execo_g5k as g5k
 import execo_engine as engine
 from execo_engine import logger
 
+import utils
+
 
 # Example from Matthieu Imbert on the execo-users mailing list
 def check_hosts_up(hosts, timeout=None, connection_params=None, polling_interval=5):
@@ -132,9 +134,9 @@ class DNSServerExperiment(engine.Engine):
         self.args_parser.add_argument('--random-seed', '-s', type=int,
                             help='Random seed for tcpclient/udpclient, for reproducibility (default: current date)')
         self.args_parser.add_argument('--client-duration', '-T', type=int, required=True,
-                            help='Duration, in seconds, for which to run the TCP or UDP clients')
-        self.args_parser.add_argument('--client-query-rate', '-Q', type=int, required=True,
-                            help='Number of queries per second for each client (VM)')
+                            help='Duration, in seconds, for which to run the TCP or UDP clients (unused if query rate uses the complex format)')
+        self.args_parser.add_argument('--client-query-rate', '-Q', type=utils.int_or_rates_duration, required=True,
+                            help='Number of queries per second for each client (VM).  Either a single integer (rate), or a comma-separated list of (rate, duration) couples.  Example: "1000 8000ms, 2000 5s" means 1k qps during 8 seconds, then 2k qps during 5 seconds.')
         self.args_parser.add_argument('--client-connection-rate', '-q', type=int, required=True,
                             help='Number of new connections per second that each client (VM) will open')
         self.args_parser.add_argument('--client-connections', '-C', type=int, required=True,
@@ -486,17 +488,30 @@ EOF
     def start_client_vm(self):
         """Start tcpclient or udpclient on all VM"""
         client = 'tcpclient' if self.args.mode == 'tcp' else 'udpclient'
+        # Boolean: if True, query rate is a simple integer, if false, it's a list.
+        simple_queryrate = isinstance(self.args.client_query_rate, int)
         # Create a different random seed for each client, but
         # deterministically based on the global seed.
         random_seed = [self.args.random_seed + vm_id for vm_id, vm in enumerate(self.vm)]
-        script = "/root/tcpscaler/{} -s {{{{random_seed}}}} -t {} -R -p 53 -r {} -c {} -n {} {}"
-        script = script.format(client,
-                               self.args.client_duration,
-                               self.args.client_query_rate,
-                               self.args.client_connections,
-                               self.args.client_connection_rate,
-                               self.server.address)
+        if simple_queryrate:
+            script = "/root/tcpscaler/{} -s {{{{random_seed}}}} -t {} -R -p 53 -r {} -c {} -n {} {}"
+            script = script.format(client, self.args.client_duration,
+                                   self.args.client_query_rate,
+                                   self.args.client_connections,
+                                   self.args.client_connection_rate,
+                                   self.server.address)
+        else:
+            script = "/root/tcpscaler/{} -s {{{{random_seed}}}} --stdin -R -p 53 -c {} -n {} {}"
+            script = script.format(client, self.args.client_connections,
+                                   self.args.client_connection_rate,
+                                   self.server.address)
         task = execo.Remote(script, self.vm, name=client).start()
+        if not simple_queryrate:
+            # TODO: find a way not to echo stdin to stdout...
+            # Write desired query rate sequence to stdin of all processes
+            task.write("{}\n".format(len(self.args.client_query_rate)).encode())
+            for rateduration in self.args.client_query_rate:
+                task.write("{} {}\n".format(rateduration.duration_ms, rateduration.rate).encode())
         return task
 
     def log_experimental_conditions(self):
