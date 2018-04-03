@@ -624,6 +624,9 @@ EOF
                     for client_id, client in enumerate(clients.processes):
                         first_line = True
                         for line in iter(client.stdout.splitlines()):
+                            # Skip anything that does not look like CSV
+                            if ',' not in line:
+                                continue
                             if need_header:
                                 # Take CSV header from first client and add a column
                                 data = line.split(",")
