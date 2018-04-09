@@ -22,6 +22,7 @@ import sys
 import re
 import csv
 from traceback import format_exc
+from copy import deepcopy
 
 import execo
 import execo_g5k as g5k
@@ -169,7 +170,7 @@ class DNSServerExperiment(engine.Engine):
         self.server_job = None
         # Machine (execo.host.Host) to be used as server in the experiment
         self.server = None
-        self.server_conn_params = execo.default_connection_params
+        self.server_conn_params = deepcopy(execo.default_connection_params)
         self.server_conn_params.update({'user': 'root'})
         ## Network
         # Global VLAN for multisite experiment
@@ -393,12 +394,13 @@ exit $rc
     def start_cpunetlog(self, hosts, conn_params=None):
         script = """/root/CPUnetLOG/__init__.py --stdout"""
         if conn_params == None:
-            task = execo.Remote(script, hosts,
-                                name="CPUnetLOG").start()
+            conn_params = deepcopy(execo.default_connection_params)
         else:
-            task = execo.Remote(script, hosts,
-                                connection_params=conn_params,
-                                name="CPUnetLOG").start()
+            conn_params = deepcopy(conn_params)
+        utils.disable_pty(conn_params)
+        task = execo.Remote(script, hosts,
+                            connection_params=conn_params,
+                            name="CPUnetLOG").start()
         return task
 
     def wait_until_vm_ready(self):
@@ -493,6 +495,9 @@ EOF
         # Create a different random seed for each client, but
         # deterministically based on the global seed.
         random_seed = [self.args.random_seed + vm_id for vm_id, vm in enumerate(self.vm)]
+        # Disable PTY allocation
+        conn_params = deepcopy(execo.default_connection_params)
+        utils.disable_pty(conn_params)
         if simple_queryrate:
             script = "/root/tcpscaler/{} -s {{{{random_seed}}}} -t {} -R -p 53 -r {} -c {} -n {} {}"
             script = script.format(client, self.args.client_duration,
@@ -505,9 +510,8 @@ EOF
             script = script.format(client, self.args.client_connections,
                                    self.args.client_connection_rate,
                                    self.server.address)
-        task = execo.Remote(script, self.vm, name=client).start()
+        task = execo.Remote(script, self.vm, name=client, connections_params=conn_params).start()
         if not simple_queryrate:
-            # TODO: find a way not to echo stdin to stdout...
             # Write desired query rate sequence to stdin of all processes
             task.write("{}\n".format(len(self.args.client_query_rate)).encode())
             for rateduration in self.args.client_query_rate:

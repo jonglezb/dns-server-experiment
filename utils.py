@@ -23,3 +23,15 @@ def int_or_rates_duration(string):
         except Exception as e:
             raise argparse.ArgumentTypeError("Invalid format: {}".format(e))
         return ret
+
+def disable_pty(connection_params):
+    """Given a set of execo connection parameters, disable the use of a PTY.
+
+    The main advantage is that stdout and stderr of remote processes will
+    no longer be mixed up.  Also, stdin will no longer be echoed back to
+    stdout.
+
+    """
+    ssh_options = tuple(opt for opt in connection_params["ssh_options"] if opt != '-tt')
+    connection_params["ssh_options"] = ssh_options
+    connection_params["pty"] = False
