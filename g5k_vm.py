@@ -516,7 +516,7 @@ EOF
             script = script.format(client, self.args.client_connections,
                                    self.args.client_connection_rate,
                                    self.server.address)
-        task = execo.Remote(script, self.vm, name=client, connections_params=conn_params).start()
+        task = execo.Remote(script, self.vm, name=client, connection_params=conn_params).start()
         if not simple_queryrate:
             # Write desired query rate sequence to stdin of all processes
             task.write("{}\n".format(len(self.args.client_query_rate)).encode())
