@@ -348,9 +348,13 @@ wait
                            "user": self.args.kadeploy_user}
         if self.multi_site():
             deploy_opts["vlan"] = self.global_vlan
+            logger.debug("Deploying environment '{}' on server {} in VLAN {}...".format(self.args.server_env,
+                                                                                        self.server.address,
+                                                                                        self.global_vlan))
+        else:
+            logger.debug("Deploying environment '{}' on server {}...".format(self.args.server_env,
+                                                                             self.server.address))
         d = g5k.Deployment([self.server], **deploy_opts)
-        logger.debug("Deploying environment '{}' on server {}...".format(self.args.server_env,
-                                                                         self.server.address))
         deployed, undeployed = g5k.kadeploy.deploy(d)
         if len(deployed) == 0:
             logger.error("Could not deploy server")
