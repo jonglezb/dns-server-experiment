@@ -174,6 +174,7 @@ class DNSServerExperiment(engine.Engine):
         self.server = None
         self.server_conn_params = deepcopy(execo.default_connection_params)
         self.server_conn_params.update({'user': 'root'})
+        utils.disable_pty(self.server_conn_params)
         ## Network
         # Global VLAN for multisite experiment
         self.global_vlan = None
@@ -452,7 +453,10 @@ git pull || rc=$?
 
 exit $rc
         """.format(server_name=self.server.address)
-        task = execo.Remote(script, self.vm, name="Setup VM").start()
+        conn_params = deepcopy(execo.default_connection_params)
+        utils.disable_pty(conn_params)
+        task = execo.Remote(script, self.vm, name="Setup VM",
+                            connection_params=conn_params).start()
         return task
 
     def start_dns_server(self):
