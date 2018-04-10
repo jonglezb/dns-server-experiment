@@ -144,6 +144,8 @@ class DNSServerExperiment(engine.Engine):
                             help='Number of TCP or UDP connections opened by each client (VM)')
         self.args_parser.add_argument('--unbound-slots-per-thread', type=int,
                             help='Sets the number of client slots to allocate per unbound thread (by default, a reasonable value is computed in TCP mode)')
+        self.args_parser.add_argument('--cpunetlog-interval', default="0.1",
+                            help='Interval in seconds between each cpunetlog data collection')
 
     def init(self):
         # Initialise random seed if not passed as argument
@@ -396,7 +398,7 @@ exit $rc
         return task
 
     def start_cpunetlog(self, hosts, conn_params=None):
-        script = """/root/CPUnetLOG/__init__.py --stdout"""
+        script = """/root/CPUnetLOG/__init__.py --stdout -i {}""".format(self.args.cpunetlog_interval)
         if conn_params == None:
             conn_params = deepcopy(execo.default_connection_params)
         else:
