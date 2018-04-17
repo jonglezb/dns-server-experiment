@@ -106,6 +106,8 @@ class DNSServerExperiment(engine.Engine):
                             help='Which Grid5000 cluster to use for the server (default: any cluster).  Unused if -J is passed.')
         self.args_parser.add_argument('--cluster',
                             help='Shortcut for both --server-cluster and --vmhosts-cluster.')
+        self.args_parser.add_argument('--production', action="store_true",
+                            help='Allow to use a production cluster')
         self.args_parser.add_argument('--nb-hosts', '-N', type=int, default=2,
                             help='Number of physical machines to reserve on the cluster to run VMs (default: %(default)s).  Unused if -j is passed.')
         self.args_parser.add_argument('--start-date', '-r',
@@ -239,10 +241,12 @@ class DNSServerExperiment(engine.Engine):
             machines_resources = "+".join([server_resources, vmhosts_resources])
         # Aggregate all resources in a single reservation
         resources = "+".join([subnet_resource, machines_resources])
+        # Determine job type
+        job_type = ["deploy"]
         if self.args.container_job != None:
-            job_type = ["deploy", "inner={}".format(self.args.container_job)]
-        else:
-            job_type = "deploy"
+            job_type.append("inner={}".format(self.args.container_job))
+        if self.args.production:
+            job_type.append("production")
         submission = g5k.OarSubmission(resources=resources,
                                        name="Combined {}".format(self.exp_id),
                                        reservation_date=self.args.start_date,
