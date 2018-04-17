@@ -35,3 +35,15 @@ def disable_pty(connection_params):
     ssh_options = tuple(opt for opt in connection_params["ssh_options"] if opt != '-tt')
     connection_params["ssh_options"] = ssh_options
     connection_params["pty"] = False
+
+def cluster_oarstr(cluster_name):
+    """Returns a string suitable to describe a cluster in a OAR reservation,
+    for instance:
+
+        {cluster='foo'}/
+
+    If the cluster name is empty or None, returns an empty string.
+    """
+    if not cluster_name:
+        return ""
+    return "{{cluster='{}'}}".format(cluster_name)

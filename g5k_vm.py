@@ -120,8 +120,12 @@ class DNSServerExperiment(engine.Engine):
                             help='Instead of making a reservation for a subnet, use an existing OAR job ID')
         self.args_parser.add_argument('--server-env', '-e',
                             help='Name of the Kadeploy environment (OS image) to deploy on the server.  Can be a filename or the name of a registered environment.')
-        self.args_parser.add_argument('--kadeploy-user', '-u',
-                            help='Kadeploy username, used when passing the name of a registered environment as server environment')
+        self.args_parser.add_argument('--vmhosts-env', default='debian9-x64-std',
+                            help='Name of the Kadeploy environment (OS image) to deploy on VM hosts.  Can be a filename or the name of a registered environment.  Default: %(default)s')
+        self.args_parser.add_argument('--vmhosts-kadeploy-user', default='deploy',
+                            help='Kadeploy username, used when passing the name of a registered environment as VM host environment (default: %(default)s)')
+        self.args_parser.add_argument('--kadeploy-user', '-u', default='deploy',
+                            help='Kadeploy username, used when passing the name of a registered environment as server environment (default: %(default)s)')
         self.args_parser.add_argument('--server-threads', type=int, default=32,
                             help='Number of server threads to use for unbound (default: %(default)s)')
         self.args_parser.add_argument('--vm-image', '-i', required=True,
@@ -145,7 +149,7 @@ class DNSServerExperiment(engine.Engine):
         self.args_parser.add_argument('--unbound-slots-per-thread', type=int,
                             help='Sets the number of client slots to allocate per unbound thread (by default, a reasonable value is computed in TCP mode)')
         self.args_parser.add_argument('--cpunetlog-interval', default="0.1",
-                            help='Interval in seconds between each cpunetlog data collection')
+                            help='Interval in seconds between each cpunetlog data collection (default: %(default)s)')
 
     def init(self):
         # Initialise random seed if not passed as argument
@@ -201,6 +205,7 @@ class DNSServerExperiment(engine.Engine):
     def reserve_global_vlan(self):
         """Global VLAN, only used for multi-site experiment (server not on the
         same site as the VM)"""
+        # TODO: integrate that into the "single job reservation" thing.
         # Existing job, look in all currently running jobs
         for (job_id, frontend) in g5k.get_current_oar_jobs():
             vlans = g5k.get_oar_job_kavlan(job_id, frontend)
@@ -215,6 +220,37 @@ class DNSServerExperiment(engine.Engine):
                                        walltime=self.args.walltime)
         [(jobid, site)] = g5k.oarsub([(submission, None)])
         self.globalvlan_job = (jobid, site)
+
+    def reserve_resources_singlejob(self):
+        """Reserve subnet, server and VM hosts in a single OAR job.  Only used for
+        single-site experiment."""
+        assert(not self.multi_site())
+        subnet_resource = "slash_22=1"
+        if self.args.vmhosts_cluster == self.args.server_cluster:
+            # Single reservation for both VM hosts and server, to ensure
+            # they are on the same switch.
+            machines_resources = "{}switch=1/nodes={}".format(utils.cluster_oarstr(self.args.vmhosts_cluster),
+                                                              self.args.nb_hosts + 1)
+        else:
+            # Reserve server and VM hosts in different clusters
+            server_resources = "{}switch=1/nodes=1".format(utils.cluster_oarstr(self.args.server_cluster))
+            vmhosts_resources = "{}switch=1/nodes=1".format(utils.cluster_oarstr(self.args.vmhosts_cluster),
+	                                                    self.args.nb_hosts)
+            machines_resources = "+".join([server_resources, vmhosts_resources])
+        # Aggregate all resources in a single reservation
+        resources = "+".join([subnet_resource, machines_resources])
+        if self.args.container_job != None:
+            job_type = ["deploy", "inner={}".format(self.args.container_job)]
+        else:
+            job_type = "deploy"
+        submission = g5k.OarSubmission(resources=resources,
+                                       name="Combined {}".format(self.exp_id),
+                                       reservation_date=self.args.start_date,
+                                       job_type=job_type,
+                                       walltime=self.args.walltime)
+        [(jobid, site)] = g5k.oarsub([(submission, self.args.vmhosts_site)])
+        # Single job
+        self.vmhosts_job = self.server_job = self.subnet_job = (jobid, site)
 
     def reserve_subnet(self):
         # Existing job
@@ -291,25 +327,50 @@ class DNSServerExperiment(engine.Engine):
         self.subnet = subnet_params['ip_prefix']
         self.subnet_ip_mac = ip_mac_list
 
+    def start_deploy_vmhosts(self):
+        hosts = g5k.get_oar_job_nodes(*self.vmhosts_job)
+        if self.multi_site():
+            self.vm_hosts = hosts
+        else:
+            # Take all but the first host
+            self.vm_hosts = sorted(hosts, key=lambda node: node.address)[1:]
+        if os.path.isfile(self.args.vmhosts_env):
+            deploy_opts = {"env_file": self.args.vmhosts_env}
+        else:
+            deploy_opts = {"env_name": self.args.vmhosts_env,
+                           "user": self.args.vmhosts_kadeploy_user}
+        if self.multi_site():
+            deploy_opts["vlan"] = self.global_vlan
+            logger.debug("Deploying environment '{}' on {} VM hosts in VLAN {}...".format(self.args.vmhosts_env,
+                                                                                          len(self.vm_hosts),
+                                                                                          self.global_vlan))
+        else:
+            logger.debug("Deploying environment '{}' on {} VM hosts...".format(self.args.vmhosts_env,
+                                                                               len(self.vm_hosts)))
+        d = g5k.Deployment(self.vm_hosts, **deploy_opts)
+        return g5k.kadeploy.Kadeployer(d).start()
+
+    def finish_deploy_vmhosts(self, deploy_process):
+        deployed = deploy_process.deployed_hosts
+        if len(deployed) != len(self.vm_hosts):
+            logger.error("Could not deploy all VM hosts, only {}/{} deployed".format(len(deployed), len(self.vm_hosts)))
+            sys.exit(1)
+        if self.multi_site():
+            logger.debug("Deployed, transforming VM hosts name to be able to reach them in the new VLAN")
+            for host in self.vm_hosts:
+                host.address = g5k.get_kavlan_host_name(host.address, self.global_vlan)
+
     def prepare_vmhosts(self):
-        self.vm_hosts = g5k.get_oar_job_nodes(*self.vmhosts_job)
         script = """\
 # Avoid conntrack on all machines
-sudo-g5k iptables -t raw -A PREROUTING -p tcp -j NOTRACK
-sudo-g5k iptables -t raw -A PREROUTING -p udp -j NOTRACK
-sudo-g5k iptables -t raw -A OUTPUT -p tcp -j NOTRACK
-sudo-g5k iptables -t raw -A OUTPUT -p udp -j NOTRACK
-
-# Create br0 if it does not yet exist
-ip link show dev br0 || {
-  sudo-g5k brctl addbr br0
-  sudo-g5k brctl addif br0 eth1
-  sudo-g5k ip link set br0 up
-}
+iptables -t raw -A PREROUTING -p tcp -j NOTRACK
+iptables -t raw -A PREROUTING -p udp -j NOTRACK
+iptables -t raw -A OUTPUT -p tcp -j NOTRACK
+iptables -t raw -A OUTPUT -p udp -j NOTRACK
         """
         task = execo.Remote(script,
                             self.vm_hosts,
-                            connection_params=g5k.default_oarsh_oarcp_params).start()
+                            connection_params=self.server_conn_params).start()
         return task
 
     def start_all_vm(self):
@@ -330,19 +391,22 @@ ip link show dev br0 || {
         script = """\
 for mac in {{{{[' '.join(macs) for macs in macs_per_host]}}}}
 do
-  iface=$(sudo-g5k create_tap)
+  iface=$(tunctl -b)
+  brctl addif br0 "$iface"
+  ip link set "$iface" up
   kvm -m {memory} -smp cores={cores},threads=1,sockets=1 -nographic -localtime -enable-kvm -drive file="{image}",if=virtio,media=disk -snapshot -net nic,model=virtio,macaddr="$mac" -net tap,ifname="$iface",script=no &
 done
 wait
         """.format(memory=memory, cores=1, image=self.args.vm_image)
-        vm_task = execo.Remote(script, self.vm_hosts, connection_params=g5k.default_oarsh_oarcp_params, name="Run VM on all hosts")
+        vm_task = execo.Remote(script, self.vm_hosts, connection_params=self.server_conn_params, name="Run VM on all hosts")
         return vm_task.start()
 
-    def deploy_server(self):
+    def start_deploy_server(self):
         """Deploy the server with the given Kadeploy environment.  Blocks until
         deployment is done"""
-        # Sort servers by name and take the first one: if several servers
-        # are part of the OAR job, this ensures we always pick the same one.
+        # Sort hosts by name and take the first one: this is useful when
+        # using a single reservation for all nodes, since we will always
+        # pick the same host as server.
         self.server = sorted(g5k.get_oar_job_nodes(*self.server_job), key=lambda node: node.address)[0]
         if os.path.isfile(self.args.server_env):
             deploy_opts = {"env_file": self.args.server_env}
@@ -358,7 +422,10 @@ wait
             logger.debug("Deploying environment '{}' on server {}...".format(self.args.server_env,
                                                                              self.server.address))
         d = g5k.Deployment([self.server], **deploy_opts)
-        deployed, undeployed = g5k.kadeploy.deploy(d)
+        return g5k.kadeploy.Kadeployer(d).start()
+
+    def finish_deploy_server(self, deploy_process):
+        deployed = deploy_process.deployed_hosts
         if len(deployed) == 0:
             logger.error("Could not deploy server")
             sys.exit(1)
@@ -532,14 +599,10 @@ EOF
         logger.info("Random seed: {}".format(self.args.random_seed))
         logger.info("Subnet [job {}]: {}".format(self.subnet_job[0],
                                                  self.subnet))
-        vmhosts = [s.address for s in g5k.get_oar_job_nodes(*self.vmhosts_job)]
-        logger.info("{} VM hosts [job {}]: {}".format(len(vmhosts),
+        all_hosts = sorted([s.address for s in g5k.get_oar_job_nodes(*self.vmhosts_job)])
+        logger.info("{} machines [job {}]: {}".format(len(all_hosts),
                                                       self.vmhosts_job[0],
-                                                      ' '.join(vmhosts)))
-        servers = [s.address for s in g5k.get_oar_job_nodes(*self.server_job)]
-        logger.info("{} servers [job {}]: {}".format(len(servers),
-                                                     self.server_job[0],
-                                                     ' '.join(servers)))
+                                                      ' '.join(all_hosts)))
 
     def log_output(self, task, task_name, log_stdout=True, log_stderr=True):
         logger.debug("Logging stdout/stderr of task {} ({} processes)".format(task_name, len(task.processes)))
@@ -565,34 +628,38 @@ EOF
             logger.debug("Experiment ID: {}".format(self.exp_id))
             if self.multi_site():
                 logger.info("Running in multi-site mode")
+            if not self.multi_site():
+                self.reserve_resources_singlejob()
+                logger.debug("Waiting for OAR job to start...")
+                g5k.wait_oar_job_start(*self.vmhosts_job)
+                self.prepare_subnet()
+                logger.debug("Prepared subnet")
             # Dependencies (besides the obvious ones):
             # - deploy_server depends on prepare_global_vlan
             # - prepare_server depends on deploy_server
             # - prepare_server depends on prepare_subnet
             # - prepare_vm depends on deploy_server
-            self.reserve_vmhosts()
-            logger.debug("Waiting for VM hosts job to start...")
-            g5k.wait_oar_job_start(*self.vmhosts_job)
-            self.reserve_server()
-            logger.debug("Waiting for server job to start...")
-            g5k.wait_oar_job_start(*self.server_job)
-            self.reserve_subnet()
-            g5k.wait_oar_job_start(*self.subnet_job)
-            self.prepare_subnet()
-            logger.debug("Prepared subnet")
             if self.multi_site():
                 self.reserve_global_vlan()
                 g5k.wait_oar_job_start(*self.globalvlan_job)
                 logger.debug("Waiting for global VLAN job to start...")
                 self.prepare_global_vlan()
             self.log_experimental_conditions()
+            logger.debug("Deploying VM hosts...")
+            machines_deploy_process = self.start_deploy_vmhosts()
+            logger.debug("Deploying server image...")
+            server_deploy_process = self.start_deploy_server()
+            machines_deploy_process.wait()
+            logger.debug("Finishing deploying VM hosts...")
+            self.finish_deploy_vmhosts(machines_deploy_process)
             logger.debug("Setting up VM hosts...")
             machines_setup_process = self.prepare_vmhosts()
-            logger.debug("Deploying server image...")
-            server_deploy_process = self.deploy_server()
-            logger.debug("Server is deployed.")
             machines_setup_process.wait()
             logger.debug("VM hosts are setup.")
+            server_deploy_process.wait()
+            logger.debug("Finishing deploying server...")
+            self.finish_deploy_server(server_deploy_process)
+            logger.debug("Server is deployed.")
             self.vm_process = self.start_all_vm()
             # Ensure VM are killed when we exit
             with self.vm_process:
@@ -671,12 +738,12 @@ EOF
             if self.vm_process:
                 logger.debug("Waiting for VM to exit")
                 self.vm_process.wait()
-                logger.info("Unbound an all VMs are shut down")
+                logger.info("Unbound and all VMs are shut down")
                 self.log_output(self.vm_process, "vm_process")
                 print(execo.Report([self.vm_process]).to_string())
             #for s in self.vm_process.processes:
             #    print("\n%s\nstdout:\n%s\nstderr:\n%s\n" % (s, s.stdout, s.stderr))
-            #g5k.oardel([job, subnet_job])
+            g5k.oardel([self.vmhosts_job])
 
 
 if __name__ == "__main__":
