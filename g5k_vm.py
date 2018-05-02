@@ -142,8 +142,10 @@ class DNSServerExperiment(engine.Engine):
                             help='Random seed for tcpclient/udpclient, for reproducibility (default: current date)')
         self.args_parser.add_argument('--client-duration', '-T', type=int, required=True,
                             help='Duration, in seconds, for which to run the TCP or UDP clients (unused if query rate uses the complex format)')
-        self.args_parser.add_argument('--client-query-rate', '-Q', type=utils.int_or_rates_duration, required=True,
+        self.args_parser.add_argument('--client-query-rate', '-Q', type=utils.int_or_rates_duration,
                             help='Number of queries per second for each client (VM).  Either a single integer (rate), or a comma-separated list of (rate, duration) couples.  Example: "1000 8000ms, 2000 5s" means 1k qps during 8 seconds, then 2k qps during 5 seconds.')
+        self.args_parser.add_argument('--client-query-rate-linear', type=utils.int_or_rates_duration,
+                            help='Sequence of query rate increase or decrease (linear slopes) for each client (VM).  Comma-separated list of (slope, duration) couples.  Example: "700 8000ms, -400 5s" means a +700 qps/s increase during 8 seconds, then -400 qps/s during 5 seconds.')
         self.args_parser.add_argument('--client-connection-rate', '-q', type=int, required=True,
                             help='Number of new connections per second that each client (VM) will open')
         self.args_parser.add_argument('--client-connections', '-C', type=int, required=True,
@@ -160,6 +162,13 @@ class DNSServerExperiment(engine.Engine):
             self.args.random_seed = int(now)
         # "Experiment ID", used in OAR job names
         self.exp_id = "{}".format(self.args.random_seed)[-5:]
+        # Various ways of specifying query rate
+        if self.args.client_query_rate_linear != None and self.args.client_query_rate == None:
+            logger.error("Error: --client-query-rate-linear must be used with an initial query rate -Q")
+            raise Exception
+        self.simple_queryrate = isinstance(self.args.client_query_rate, int) and self.args.client_query_rate_linear == None
+        self.stdin_queryrate = not isinstance(self.args.client_query_rate, int)
+        self.stdin_queryratelinear = self.args.client_query_rate_linear != None
         # Compute number of unbound slots if not set
         if self.args.unbound_slots_per_thread == None:
             self.args.unbound_slots_per_thread = 500 + int(1.05 * self.args.client_connections * self.args.nb_hosts * self.args.nb_vm / self.args.server_threads)
@@ -571,32 +580,41 @@ EOF
     def start_client_vm(self):
         """Start tcpclient or udpclient on all VM"""
         client = 'tcpclient' if self.args.mode == 'tcp' else 'udpclient'
-        # Boolean: if True, query rate is a simple integer, if false, it's a list.
-        simple_queryrate = isinstance(self.args.client_query_rate, int)
         # Create a different random seed for each client, but
         # deterministically based on the global seed.
         random_seed = [self.args.random_seed + vm_id for vm_id, vm in enumerate(self.vm)]
         # Disable PTY allocation
         conn_params = deepcopy(execo.default_connection_params)
         utils.disable_pty(conn_params)
-        if simple_queryrate:
+        if self.simple_queryrate:
             script = "/root/tcpscaler/{} -s {{{{random_seed}}}} -t {} -R -p 53 -r {} -c {} -n {} {}"
             script = script.format(client, self.args.client_duration,
                                    self.args.client_query_rate,
                                    self.args.client_connections,
                                    self.args.client_connection_rate,
                                    self.server.address)
-        else:
+        elif self.stdin_queryrate:
             script = "/root/tcpscaler/{} -s {{{{random_seed}}}} --stdin -R -p 53 -c {} -n {} {}"
             script = script.format(client, self.args.client_connections,
                                    self.args.client_connection_rate,
                                    self.server.address)
+        elif self.stdin_queryratelinear:
+            script = "/root/tcpscaler/{} -s {{{{random_seed}}}} --stdin-rateslope -R -p 53 -r {} -c {} -n {} {}"
+            script = script.format(client, self.args.client_query_rate,
+                                   self.args.client_connections,
+                                   self.args.client_connection_rate,
+                                   self.server.address)
         task = execo.Remote(script, self.vm, name=client, connection_params=conn_params).start()
-        if not simple_queryrate:
+        if self.stdin_queryrate:
             # Write desired query rate sequence to stdin of all processes
             task.write("{}\n".format(len(self.args.client_query_rate)).encode())
             for rateduration in self.args.client_query_rate:
                 task.write("{} {}\n".format(rateduration.duration_ms, rateduration.rate).encode())
+        if self.stdin_queryratelinear:
+            # Write desired query rate increase/decrease sequence to stdin of all processes
+            task.write("{}\n".format(len(self.args.client_query_rate_linear)).encode())
+            for rateslope_duration in self.args.client_query_rate_linear:
+                task.write("{} {}\n".format(rateslope_duration.duration_ms, rateslope_duration.rate).encode())
         return task
 
     def log_experimental_conditions(self):
