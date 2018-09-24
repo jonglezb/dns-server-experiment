@@ -94,8 +94,10 @@ class DNSServerExperiment(engine.Engine):
     def __init__(self):
         super(DNSServerExperiment, self).__init__()
         ## Parse command-line arguments
-        self.args_parser.add_argument('--mode', choices=['udp', 'tcp'], default='tcp',
-                            help='Whether to run in UDP or TCP mode (default: %(default)s)')
+        self.args_parser.add_argument('--mode', choices=['udp', 'tcp', 'tls'], default='tcp',
+                            help='Whether to run in UDP, TCP or TLS mode (default: %(default)s)')
+        self.args_parser.add_argument('--tls-keytype', choices=['rsa:2048', 'rsa:4096'], default='rsa:2048',
+                            help='Type of private key to generate for TLS operation (default: %(default)s)')
         self.args_parser.add_argument('--vmhosts-site',
                             help='Which Grid5000 site (i.e. frontend) to use for the VM hosts (default: local site).')
         self.args_parser.add_argument('--vmhosts-cluster',
@@ -187,6 +189,7 @@ class DNSServerExperiment(engine.Engine):
         self.server_job = None
         # Machine (execo.host.Host) to be used as server in the experiment
         self.server = None
+        self.server_port = 853 if self.args.mode == 'tls' else 53
         self.server_conn_params = deepcopy(execo.default_connection_params)
         self.server_conn_params.update({'user': 'root'})
         utils.disable_pty(self.server_conn_params)
@@ -544,14 +547,17 @@ exit $rc
             "buffer_size": 4096,
             "nb_threads": self.args.server_threads,
             "max_tcp_clients_per_thread": self.args.unbound_slots_per_thread,
+            "mode": self.args.mode,
+            "port": 853 if self.args.mode == 'tls' else 53,
         }
         max_clients = self.args.server_threads * self.args.unbound_slots_per_thread
-        logger.debug("Unbound using {nb_threads} threads, {max_tcp_clients_per_thread} max TCP clients per thread, {buffer_size}b buffer size".format(**unbound_params))
-        logger.debug("Max TCP clients: {}".format(max_clients))
+        logger.debug("Unbound in {mode} mode using {nb_threads} threads, {max_tcp_clients_per_thread} max TCP/TLS clients per thread, {buffer_size}b buffer size".format(**unbound_params))
+        logger.debug("Max TCP/TLS clients: {}".format(max_clients))
         unbound_config = """\
 cat > /tmp/unbound.conf <<EOF
 server:
   interface: 0.0.0.0
+  port: {port}
   access-control: 0.0.0.0/0 allow
   username: root
   use-syslog: no
@@ -567,9 +573,23 @@ server:
   local-data: "example.com A 42.42.42.42"
 EOF
         """.format(**unbound_params)
+        if self.args.mode == 'tls':
+            unbound_config += """\
+cat >> /tmp/unbound.conf <<EOF
+  ssl-service-key: /tmp/unbound.key
+  ssl-service-pem: /tmp/unbound.cert
+EOF
+            """
         execo.Remote(unbound_config, [self.server],
                      connection_params=self.server_conn_params,
                      name="Configure unbound").run()
+        # Generate TLS key and self-signed certificate
+        if self.args.mode == 'tls':
+            generate_tls = "openssl req -x509 -subj '/CN=localhost' -nodes -newkey {} -keyout /tmp/unbound.key -out /tmp/unbound.cert -days 365".format(self.args.tls_keytype)
+            execo.Remote(generate_tls, [self.server],
+                         connection_params=self.server_conn_params,
+                         name="Generate TLS key and cert").run()
+
         # Kill possibly lingering unbound instances
         task = execo.Remote("pkill unbound; sleep 3; /root/unbound/unbound -d -v -c /tmp/unbound.conf",
                             [self.server],
@@ -579,7 +599,12 @@ EOF
 
     def start_client_vm(self):
         """Start tcpclient or udpclient on all VM"""
-        client = 'tcpclient' if self.args.mode == 'tcp' else 'udpclient'
+        if self.args.mode == 'tcp':
+            client = 'tcpclient'
+        elif self.args.mode == 'tls':
+            client = 'tcpclient --tls'
+        else:
+            client = 'udpclient'
         # Create a different random seed for each client, but
         # deterministically based on the global seed.
         random_seed = [self.args.random_seed + vm_id for vm_id, vm in enumerate(self.vm)]
@@ -587,20 +612,21 @@ EOF
         conn_params = deepcopy(execo.default_connection_params)
         utils.disable_pty(conn_params)
         if self.simple_queryrate:
-            script = "/root/tcpscaler/{} -s {{{{random_seed}}}} -t {} -R -p 53 -r {} -c {} -n {} {}"
+            script = "/root/tcpscaler/{} -s {{{{random_seed}}}} -t {} -R -p {} -r {} -c {} -n {} {}"
             script = script.format(client, self.args.client_duration,
+                                   self.server_port,
                                    self.args.client_query_rate,
                                    self.args.client_connections,
                                    self.args.client_connection_rate,
                                    self.server.address)
         elif self.stdin_queryrate:
-            script = "/root/tcpscaler/{} -s {{{{random_seed}}}} --stdin -R -p 53 -c {} -n {} {}"
-            script = script.format(client, self.args.client_connections,
+            script = "/root/tcpscaler/{} -s {{{{random_seed}}}} --stdin -R -p {} -c {} -n {} {}"
+            script = script.format(client, self.server_port, self.args.client_connections,
                                    self.args.client_connection_rate,
                                    self.server.address)
         elif self.stdin_queryratelinear:
-            script = "/root/tcpscaler/{} -s {{{{random_seed}}}} --stdin-rateslope -R -p 53 -r {} -c {} -n {} {}"
-            script = script.format(client, self.args.client_query_rate,
+            script = "/root/tcpscaler/{} -s {{{{random_seed}}}} --stdin-rateslope -R -p {} -r {} -c {} -n {} {}"
+            script = script.format(client, self.server_port, self.args.client_query_rate,
                                    self.args.client_connections,
                                    self.args.client_connection_rate,
                                    self.server.address)
