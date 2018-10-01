@@ -508,6 +508,10 @@ exit $rc
     def prepare_vm(self):
         script = """\
 rc=0
+# Install dependencies
+apt-get update || rc=$?
+apt-get --yes install libssl-dev || rc=$?
+
 # Update git repository for tcpclient.
 cd /root/tcpscaler || rc=$?
 git pull || rc=$?
