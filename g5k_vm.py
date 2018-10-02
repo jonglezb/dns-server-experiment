@@ -6,7 +6,7 @@ from __future__ import division, print_function
 This python script is built around Execo <http://execo.gforge.inria.fr/doc/latest-stable/>
 to run server load experiments on Grid-5000.
 
-The basic idea is to have a powerful server running unbound, and then
+The basic idea is to have a powerful server running unbound or bind9, and then
 spawn hundreds of VMs, each one opening 50k TCP connections to the server
 and performing DNS queries.
 
@@ -130,8 +130,6 @@ class DNSServerExperiment(engine.Engine):
                             help='Kadeploy username, used when passing the name of a registered environment as VM host environment (default: %(default)s)')
         self.args_parser.add_argument('--kadeploy-user', '-u', default='deploy',
                             help='Kadeploy username, used when passing the name of a registered environment as server environment (default: %(default)s)')
-        self.args_parser.add_argument('--server-threads', type=int, default=32,
-                            help='Number of server threads to use for unbound (default: %(default)s)')
         self.args_parser.add_argument('--vm-image', '-i', required=True,
                             help='Path to the qcow2 VM image to use (on the G5K frontend)')
         self.args_parser.add_argument('--nb-vm', '-n', type=int, default=1,
@@ -152,8 +150,13 @@ class DNSServerExperiment(engine.Engine):
                             help='Number of new connections per second that each client (VM) will open')
         self.args_parser.add_argument('--client-connections', '-C', type=int, required=True,
                             help='Number of TCP or UDP connections opened by each client (VM)')
-        self.args_parser.add_argument('--unbound-slots-per-thread', type=int,
-                            help='Sets the number of client slots to allocate per unbound thread (by default, a reasonable value is computed in TCP mode)')
+        self.args_parser.add_argument('--resolver', choices=['unbound', 'bind9'],
+                            default='unbound',
+                            help='Which resolver to use (default: %(default)s)')
+        self.args_parser.add_argument('--server-threads', type=int, default=32,
+                            help='Number of server threads to use for the resolver (default: %(default)s)')
+        self.args_parser.add_argument('--resolver-slots-per-thread', type=int,
+                            help='Sets the number of client slots to allocate per resolver thread (by default, a reasonable value is computed in TCP mode)')
         self.args_parser.add_argument('--cpunetlog-interval', default="0.1",
                             help='Interval in seconds between each cpunetlog data collection (default: %(default)s)')
 
@@ -172,11 +175,11 @@ class DNSServerExperiment(engine.Engine):
         self.stdin_queryrate = not isinstance(self.args.client_query_rate, int)
         self.stdin_queryratelinear = self.args.client_query_rate_linear != None
         # Compute number of unbound slots if not set
-        if self.args.unbound_slots_per_thread == None:
-            self.args.unbound_slots_per_thread = 500 + int(1.05 * self.args.client_connections * self.args.nb_hosts * self.args.nb_vm / self.args.server_threads)
+        if self.args.resolver_slots_per_thread == None:
+            self.args.resolver_slots_per_thread = 500 + int(1.05 * self.args.client_connections * self.args.nb_hosts * self.args.nb_vm / self.args.server_threads)
         # Don't use any TCP slots in UDP mode
         if self.args.mode == 'udp':
-            self.args.unbound_slots_per_thread = 0
+            self.args.resolver_slots_per_thread = 0
         ## Physical machines
         # Backwards compatibility
         if self.args.cluster:
@@ -512,6 +515,9 @@ rc=0
 apt-get update || rc=$?
 apt-get --yes install libssl-dev || rc=$?
 
+# Install bind
+apt-get --yes install bind9 || rc=$?
+
 # Update git repository for tcpclient.
 cd /root/tcpscaler || rc=$?
 git pull || rc=$?
@@ -546,17 +552,7 @@ exit $rc
                             connection_params=conn_params).start()
         return task
 
-    def start_dns_server(self):
-        unbound_params = {
-            "buffer_size": 4096,
-            "nb_threads": self.args.server_threads,
-            "max_tcp_clients_per_thread": self.args.unbound_slots_per_thread,
-            "mode": self.args.mode,
-            "port": 853 if self.args.mode == 'tls' else 53,
-        }
-        max_clients = self.args.server_threads * self.args.unbound_slots_per_thread
-        logger.debug("Unbound in {mode} mode using {nb_threads} threads, {max_tcp_clients_per_thread} max TCP/TLS clients per thread, {buffer_size}b buffer size".format(**unbound_params))
-        logger.debug("Max TCP/TLS clients: {}".format(max_clients))
+    def configure_unbound(self, params):
         unbound_config = """\
 cat > /tmp/unbound.conf <<EOF
 server:
@@ -576,29 +572,84 @@ server:
   local-zone: example.com static
   local-data: "example.com A 42.42.42.42"
 EOF
-        """.format(**unbound_params)
+        """.format(**params)
         if self.args.mode == 'tls':
             unbound_config += """\
 cat >> /tmp/unbound.conf <<EOF
-  ssl-service-key: /tmp/unbound.key
-  ssl-service-pem: /tmp/unbound.cert
+  ssl-service-key: /tmp/resolver.key
+  ssl-service-pem: /tmp/resolver.cert
 EOF
             """
-        execo.Remote(unbound_config, [self.server],
+        return unbound_config
+
+    def configure_bind9(self, params):
+        bind_config = """
+cat > /tmp/named.conf <<EOF
+options {
+  listen-on port {port};
+  pid-file no;
+  recursion yes;
+  allow-recursion { any; };
+  recursive-clients 10000;
+  tcp-clients {max_tcp_clients_per_thread};
+  tcp-listen-queue 8192;
+  reserved-sockets {max_tcp_clients_per_thread};
+}
+zone "example.com"  { type master; file "/tmp/db.example.com"; };
+EOF
+
+cat > /tmp/db.example.com <<EOF
+\$TTL	86400
+@	IN	SOA	localhost. root.localhost. (
+			      1		; Serial
+			 604800		; Refresh
+			  86400		; Retry
+			2419200		; Expire
+			  86400 )	; Negative Cache TTL
+;
+@	IN	NS	localhost.
+@	IN	A	42.42.42.42
+EOF
+        """.format(**params)
+        return bind_config
+
+    def start_dns_server(self):
+        resolver_params = {
+            "resolver": self.args.resolver,
+            "buffer_size": 4096,
+            "nb_threads": self.args.server_threads,
+            "max_tcp_clients_per_thread": self.args.resolver_slots_per_thread,
+            # Only used by bind9: according to the documentation, reserved-sockets can be at most maxsockets - 128
+            "maxsockets": self.args.resolver_slots_per_thread + 128,
+            "mode": self.args.mode,
+            "port": 853 if self.args.mode == 'tls' else 53,
+        }
+        max_clients = self.args.server_threads * self.args.resolver_slots_per_thread
+        logger.debug("{resolver} in {mode} mode using {nb_threads} threads, {max_tcp_clients_per_thread} max TCP/TLS clients per thread, {buffer_size}b buffer size".format(**resolver_params))
+        logger.debug("Max TCP/TLS clients: {}".format(max_clients))
+        if self.args.resolver == 'unbound':
+            resolver_config = self.configure_unbound(resolver_params)
+        elif self.args.resolver == 'bind9':
+            resolver_config = self.configure_bind9(resolver_params)
+        execo.Remote(resolver_config, [self.server],
                      connection_params=self.server_conn_params,
-                     name="Configure unbound").run()
+                     name="Configure resolver").run()
         # Generate TLS key and self-signed certificate
         if self.args.mode == 'tls':
-            generate_tls = "openssl req -x509 -subj '/CN=localhost' -nodes -newkey {} -keyout /tmp/unbound.key -out /tmp/unbound.cert -days 365".format(self.args.tls_keytype)
+            generate_tls = "openssl req -x509 -subj '/CN=localhost' -nodes -newkey {} -keyout /tmp/resolver.key -out /tmp/resolver.cert -days 365".format(self.args.tls_keytype)
             execo.Remote(generate_tls, [self.server],
                          connection_params=self.server_conn_params,
                          name="Generate TLS key and cert").run()
+        # Run resolver
+        if self.args.resolver == 'unbound':
+            resolver_cmd = "pkill unbound; sleep 3; /root/unbound/unbound -d -v -c /tmp/unbound.conf"
+        elif self.args.resolver == 'bind9':
+            resolver_cmd = "/usr/sbin/named -c /tmp/named.conf -g -n {nb_threads} -U {nb_threads} -S {maxsockets}"
 
-        # Kill possibly lingering unbound instances
-        task = execo.Remote("pkill unbound; sleep 3; /root/unbound/unbound -d -v -c /tmp/unbound.conf",
+        task = execo.Remote(resolver_cmd.format(**resolver_params),
                             [self.server],
                             connection_params=self.server_conn_params,
-                            name="Unbound server process").start()
+                            name="Resolver process").start()
         return task
 
     def start_client_vm(self):
@@ -674,7 +725,7 @@ EOF
 
     def run(self):
         rtt_file = self.result_dir + "/rtt.csv"
-        unbound = None
+        resolver = None
         client = 'tcpclient' if self.args.mode == 'tcp' else 'udpclient'
         try:
             logger.debug("Experiment ID: {}".format(self.exp_id))
@@ -733,10 +784,10 @@ EOF
                 logger.info("Started {} VMs.".format(len(self.vm)))
                 cpunetlog_vms = self.start_cpunetlog(self.vm)
                 cpunetlog_server = self.start_cpunetlog([self.server], self.server_conn_params)
-                unbound = self.start_dns_server()
-                logger.info("Started unbound on {}.".format(self.server.address))
-                # Leave time for unbound to start
-                if self.args.unbound_slots_per_thread < 1000000:
+                resolver = self.start_dns_server()
+                logger.info("Started resolver on {}.".format(self.server.address))
+                # Leave time for resolver to start
+                if self.args.resolver_slots_per_thread < 1000000:
                     execo.sleep(15)
                 else:
                     execo.sleep(60)
@@ -782,15 +833,15 @@ EOF
             #self.kill_all_vm()
             if self.vm_process:
                 self.vm_process.kill()
-            if unbound:
-                unbound.kill()
-                logger.debug("Waiting for unbound to exit")
-                unbound.wait()
-                self.log_output(unbound, "unbound")
+            if resolver:
+                resolver.kill()
+                logger.debug("Waiting for resolver to exit")
+                resolver.wait()
+                self.log_output(resolver, "resolver")
             if self.vm_process:
                 logger.debug("Waiting for VM to exit")
                 self.vm_process.wait()
-                logger.info("Unbound and all VMs are shut down")
+                logger.info("Resolver and all VMs are shut down")
                 self.log_output(self.vm_process, "vm_process")
                 print(execo.Report([self.vm_process]).to_string())
             #for s in self.vm_process.processes:
