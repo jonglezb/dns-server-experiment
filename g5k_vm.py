@@ -586,15 +586,15 @@ EOF
         bind_config = """
 cat > /tmp/named.conf <<EOF
 options {{
-  listen-on port {port};
-  pid-file no;
+  port {port};
+  pid-file none;
   recursion yes;
   allow-recursion {{ any; }};
   recursive-clients 10000;
   tcp-clients {max_tcp_clients_per_thread};
   tcp-listen-queue 8192;
   reserved-sockets {max_tcp_clients_per_thread};
-}}
+}};
 zone "example.com"  {{ type master; file "/tmp/db.example.com"; }};
 EOF
 
