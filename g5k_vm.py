@@ -471,6 +471,9 @@ cd /root/unbound || rc=$?
 git pull || rc=$?
 make -j8 || rc=$?
 
+# Install bind
+apt-get --yes install bind9 || rc=$?
+
 # Install CPUNetLog
 apt-get --yes install python3 python3-psutil python3-netifaces
 cd /root/
@@ -514,9 +517,6 @@ rc=0
 # Install dependencies
 apt-get update || rc=$?
 apt-get --yes install libssl-dev || rc=$?
-
-# Install bind
-apt-get --yes install bind9 || rc=$?
 
 # Update git repository for tcpclient.
 cd /root/tcpscaler || rc=$?
