@@ -153,6 +153,8 @@ class DNSServerExperiment(engine.Engine):
         self.args_parser.add_argument('--resolver', choices=['unbound', 'bind9'],
                             default='unbound',
                             help='Which resolver to use (default: %(default)s)')
+        self.args_parser.add_argument('--bind9-version', default='9.13.3',
+                            help='Which version of bind9 to use (default: %(default)s)')
         self.args_parser.add_argument('--server-threads', type=int, default=32,
                             help='Number of server threads to use for the resolver (default: %(default)s)')
         self.args_parser.add_argument('--resolver-slots-per-thread', type=int,
@@ -213,6 +215,11 @@ class DNSServerExperiment(engine.Engine):
         self.vm = []
         # Process that runs all VMs, as a "Remote" instance
         self.vm_process = None
+        # Name of resolver, mostly for logging
+        if self.args.resolver == 'unbound':
+            self.resolver_name = 'unbound 1.6.7'
+        elif self.args.resolver == 'bind9':
+            self.resolver_name = 'bind {}'.format(self.args.bind9_version)
 
     def multi_site(self):
         if self.args.vmhosts_site == None and self.args.server_site == None:
@@ -453,7 +460,8 @@ wait
             self.server.address = g5k.get_kavlan_host_name(self.server.address, self.global_vlan)
 
     def prepare_server(self):
-        # Server is already deployed
+        # At this point, the server is already deployed
+        bind_version = "v" + self.args.bind9_version.replace(".", "_")
         script = """\
 rc=0
 # Add direct route to VM network
@@ -472,7 +480,16 @@ git pull || rc=$?
 make -j8 || rc=$?
 
 # Install bind
-apt-get --yes install bind9 || rc=$?
+cd /root/
+[ -d "bind9" ] || git clone  https://gitlab.isc.org/isc-projects/bind9.git || rc=$?
+cd bind9 || rc=$?
+git pull || rc=$?
+git checkout {bind_version}
+# Perf tuning: https://kb.isc.org/docs/aa-01314
+# We can't tune the buffer size, it is unconditionally set to 16 MB by --with-tuning=large.
+# -DRCVBUFSIZE=4194304
+./configure --with-tuning=large --enable-largefile --enable-shared --enable-static --with-openssl=/usr --with-gnu-ld --with-atf=no 'CFLAGS=-O2 -fstack-protector-strong -Wformat -Werror=format-security -fno-strict-aliasing -fno-delete-null-pointer-checks -DNO_VERSION_DATE -DDIG_SIGCHASE' 'LDFLAGS=-Wl,-z,relro -Wl,-z,now' 'CPPFLAGS=-Wdate-time -D_FORTIFY_SOURCE=2' || rc=$?
+make -j32 || rc=$?
 
 # Install CPUNetLog
 apt-get --yes install python3 python3-psutil python3-netifaces
@@ -481,7 +498,7 @@ cd /root/
 cd CPUnetLOG || rc=$?
 git pull || rc=$?
 exit $rc
-        """.format(vm_subnet=self.subnet)
+        """.format(vm_subnet=self.subnet, bind_version=bind_version)
         task = execo.Remote(script, [self.server],
                             connection_params=self.server_conn_params,
                             name="Setup server").start()
@@ -644,7 +661,7 @@ EOF
         if self.args.resolver == 'unbound':
             resolver_cmd = "pkill unbound; sleep 3; /root/unbound/unbound -d -v -c /tmp/unbound.conf"
         elif self.args.resolver == 'bind9':
-            resolver_cmd = "/usr/sbin/named -c /tmp/named.conf -g -n {nb_threads} -U {nb_threads} -S {maxsockets}"
+            resolver_cmd = "/root/bind9/bin/named/named -c /tmp/named.conf -g -n {nb_threads} -U {nb_threads} -S {maxsockets}"
 
         task = execo.Remote(resolver_cmd.format(**resolver_params),
                             [self.server],
@@ -785,7 +802,7 @@ EOF
                 cpunetlog_vms = self.start_cpunetlog(self.vm)
                 cpunetlog_server = self.start_cpunetlog([self.server], self.server_conn_params)
                 resolver = self.start_dns_server()
-                logger.info("Started resolver on {}.".format(self.server.address))
+                logger.info("Started resolver ({}) on {}.".format(self.resolver_name, self.server.address))
                 # Leave time for resolver to start
                 if self.args.resolver_slots_per_thread < 1000000:
                     execo.sleep(15)
