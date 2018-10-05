@@ -488,7 +488,7 @@ git checkout {bind_version}
 # Perf tuning: https://kb.isc.org/docs/aa-01314
 # We can't tune the buffer size, it is unconditionally set to 16 MB by --with-tuning=large.
 # -DRCVBUFSIZE=4194304
-./configure --with-tuning=large --enable-largefile --enable-shared --enable-static --with-openssl=/usr --with-gnu-ld --with-atf=no 'CFLAGS=-O2 -fstack-protector-strong -Wformat -Werror=format-security -fno-strict-aliasing -fno-delete-null-pointer-checks -DNO_VERSION_DATE -DDIG_SIGCHASE' 'LDFLAGS=-Wl,-z,relro -Wl,-z,now' 'CPPFLAGS=-Wdate-time -D_FORTIFY_SOURCE=2' || rc=$?
+./configure --with-tuning=large --enable-largefile --enable-shared --enable-static --with-openssl=/usr --with-gnu-ld --with-atf=no --disable-linux-caps 'CFLAGS=-O2 -fstack-protector-strong -Wformat -Werror=format-security -fno-strict-aliasing -fno-delete-null-pointer-checks -DNO_VERSION_DATE -DDIG_SIGCHASE' 'LDFLAGS=-Wl,-z,relro -Wl,-z,now' 'CPPFLAGS=-Wdate-time -D_FORTIFY_SOURCE=2' || rc=$?
 make -j32 || rc=$?
 
 # Install CPUNetLog
