@@ -218,10 +218,13 @@ class DNSServerExperiment(engine.Engine):
         # Process that runs all VMs, as a "Remote" instance
         self.vm_process = None
         # Name of resolver, mostly for logging
+        self.resolver_name = ""
         if self.args.resolver == 'unbound':
             self.resolver_name = 'unbound 1.6.7'
         elif self.args.resolver == 'bind9':
             self.resolver_name = 'bind {}'.format(self.args.bind9_version)
+        elif self.args.resolver == 'knot-resolver':
+            self.resolver_name = 'knot-resolver {}'.format(self.args.knot_version)
 
     def multi_site(self):
         if self.args.vmhosts_site == None and self.args.server_site == None:
