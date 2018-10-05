@@ -150,11 +150,13 @@ class DNSServerExperiment(engine.Engine):
                             help='Number of new connections per second that each client (VM) will open')
         self.args_parser.add_argument('--client-connections', '-C', type=int, required=True,
                             help='Number of TCP or UDP connections opened by each client (VM)')
-        self.args_parser.add_argument('--resolver', choices=['unbound', 'bind9'],
+        self.args_parser.add_argument('--resolver', choices=['unbound', 'bind9', 'knot-resolver'],
                             default='unbound',
                             help='Which resolver to use (default: %(default)s)')
         self.args_parser.add_argument('--bind9-version', default='9.13.3',
                             help='Which version of bind9 to use (default: %(default)s)')
+        self.args_parser.add_argument('--knot-version', default='3.0.0',
+                            help='Which version of knot resolver to use (default: %(default)s)')
         self.args_parser.add_argument('--server-threads', type=int, default=32,
                             help='Number of server threads to use for the resolver (default: %(default)s)')
         self.args_parser.add_argument('--resolver-slots-per-thread', type=int,
@@ -462,6 +464,7 @@ wait
     def prepare_server(self):
         # At this point, the server is already deployed
         bind_version = "v" + self.args.bind9_version.replace(".", "_")
+        knot_version = "v" + self.args.knot_version
         script = """\
 rc=0
 # Add direct route to VM network
@@ -491,6 +494,19 @@ git checkout {bind_version}
 ./configure --with-tuning=large --enable-largefile --enable-shared --enable-static --with-openssl=/usr --with-gnu-ld --with-atf=no --disable-linux-caps 'CFLAGS=-O2 -fstack-protector-strong -Wformat -Werror=format-security -fno-strict-aliasing -fno-delete-null-pointer-checks -DNO_VERSION_DATE -DDIG_SIGCHASE' 'LDFLAGS=-Wl,-z,relro -Wl,-z,now' 'CPPFLAGS=-Wdate-time -D_FORTIFY_SOURCE=2' || rc=$?
 make -j32 || rc=$?
 
+# Install knot-resolver
+apt-get update
+cd /root/
+[ -d "knot-resolver" ] || git clone  https://gitlab.labs.nic.cz/knot/knot-resolver.git || rc=$?
+cd knot-resolver || rc=$?
+git pull || rc=$?
+git checkout {knot_version} || rc=$?
+git submodule update --init --recursive || rc=$?
+apt-get --yes install -t stretch-backports libknot-dev || rc=$?
+apt-get --yes build-dep -t stretch-backports knot-resolver || rc=$?
+make -j32 CFLAGS="-DNDEBUG" daemon modules || rc=$?
+make install || rc=$?
+
 # Install CPUNetLog
 apt-get --yes install python3 python3-psutil python3-netifaces
 cd /root/
@@ -498,7 +514,9 @@ cd /root/
 cd CPUnetLOG || rc=$?
 git pull || rc=$?
 exit $rc
-        """.format(vm_subnet=self.subnet, bind_version=bind_version)
+        """.format(vm_subnet=self.subnet,
+                   bind_version=bind_version,
+                   knot_version=knot_version)
         task = execo.Remote(script, [self.server],
                             connection_params=self.server_conn_params,
                             name="Setup server").start()
@@ -630,6 +648,27 @@ EOF
         """.format(**params)
         return bind_config
 
+    def configure_knot(self, params):
+        knot_config = """
+cat > /tmp/knot-resolver.conf <<EOF
+modules = {{
+  'hints',
+}}
+
+-- knot resolver automatically enables TLS when listening on port 853
+net.listen('0.0.0.0', {port})
+
+hints['example.com'] = '42.42.42.42'
+EOF
+        """.format(**params)
+        if self.args.mode == 'tls':
+            knot_config += """\
+cat >> /tmp/knot-resolver.conf <<EOF
+net.tls("/tmp/resolver.cert", "/tmp/resolver.key")
+EOF
+            """
+        return knot_config
+
     def start_dns_server(self):
         resolver_params = {
             "resolver": self.args.resolver,
@@ -648,6 +687,8 @@ EOF
             resolver_config = self.configure_unbound(resolver_params)
         elif self.args.resolver == 'bind9':
             resolver_config = self.configure_bind9(resolver_params)
+        elif self.args.resolver == 'knot-resolver':
+            resolver_config = self.configure_knot(resolver_params)
         execo.Remote(resolver_config, [self.server],
                      connection_params=self.server_conn_params,
                      name="Configure resolver").run()
@@ -662,6 +703,8 @@ EOF
             resolver_cmd = "pkill unbound; sleep 3; /root/unbound/unbound -d -v -c /tmp/unbound.conf"
         elif self.args.resolver == 'bind9':
             resolver_cmd = "/root/bind9/bin/named/named -c /tmp/named.conf -g -n {nb_threads} -U {nb_threads} -S {maxsockets}"
+        elif self.args.resolver == 'knot-resolver':
+            resolver_cmd = "LD_LIBRARY_PATH=/usr/local/lib /usr/local/sbin/kresd -f {nb_threads} -c /tmp/knot-resolver.conf"
 
         task = execo.Remote(resolver_cmd.format(**resolver_params),
                             [self.server],
