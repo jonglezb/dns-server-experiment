@@ -480,11 +480,14 @@ sysctl net.ipv4.tcp_max_syn_backlog=100000 || rc=$?
 sysctl fs.file-max=20000000 || rc=$?
 echo 20000000 > /proc/sys/fs/nr_open || rc=$?
 
+[ "{resolver}" = "unbound" ] && {
 # Update git repository for unbound.
 cd /root/unbound || rc=$?
 git pull || rc=$?
 make -j8 || rc=$?
+}
 
+[ "{resolver}" = "bind9" ] && {
 # Install bind
 cd /root/
 [ -d "bind9" ] || git clone  https://gitlab.isc.org/isc-projects/bind9.git || rc=$?
@@ -496,7 +499,9 @@ git checkout {bind_version}
 # -DRCVBUFSIZE=4194304
 ./configure --with-tuning=large --enable-largefile --enable-shared --enable-static --with-openssl=/usr --with-gnu-ld --with-atf=no --disable-linux-caps 'CFLAGS=-O2 -fstack-protector-strong -Wformat -Werror=format-security -fno-strict-aliasing -fno-delete-null-pointer-checks -DNO_VERSION_DATE -DDIG_SIGCHASE' 'LDFLAGS=-Wl,-z,relro -Wl,-z,now' 'CPPFLAGS=-Wdate-time -D_FORTIFY_SOURCE=2' || rc=$?
 make -j32 || rc=$?
+}
 
+[ "{resolver}" = "knot-resolver" ] && {
 # Install knot-resolver
 apt-get update
 cd /root/
@@ -509,6 +514,7 @@ apt-get --yes install -t stretch-backports libknot-dev || rc=$?
 apt-get --yes build-dep -t stretch-backports knot-resolver || rc=$?
 make -j32 CFLAGS="-DNDEBUG" daemon modules || rc=$?
 make install || rc=$?
+}
 
 # Install CPUNetLog
 apt-get --yes install python3 python3-psutil python3-netifaces
@@ -518,6 +524,7 @@ cd CPUnetLOG || rc=$?
 git pull || rc=$?
 exit $rc
         """.format(vm_subnet=self.subnet,
+                   resolver=self.args.resolver,
                    bind_version=bind_version,
                    knot_version=knot_version)
         task = execo.Remote(script, [self.server],
