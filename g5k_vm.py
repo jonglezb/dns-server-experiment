@@ -509,6 +509,9 @@ cd /root/
 cd knot-resolver || rc=$?
 git pull || rc=$?
 git checkout {knot_version} || rc=$?
+# Tweak timers
+sed -i -e 's#net->tcp.in_idle_timeout = 10000;#net->tcp.in_idle_timeout = 3600000;#' daemon/network.c || rc=$?
+sed -i -e 's#KR_CONN_RTT_MAX 2000#KR_CONN_RTT_MAX 3600000#' lib/defines.h || rc=$?
 git submodule update --init --recursive || rc=$?
 apt-get --yes install -t stretch-backports libknot-dev || rc=$?
 apt-get --yes build-dep -t stretch-backports knot-resolver || rc=$?
