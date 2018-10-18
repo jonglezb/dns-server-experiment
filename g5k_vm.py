@@ -469,6 +469,8 @@ wait
         bind_version = "v" + self.args.bind9_version.replace(".", "_")
         knot_version = "v" + self.args.knot_version
         script = """\
+function repeat() {{ count=$1; shift; for i in $(seq 1 $count); do "$@" && return; sleep 2; done; }}
+
 rc=0
 # Add direct route to VM network
 ip route replace {vm_subnet} dev eth0 || rc=$?
@@ -483,16 +485,16 @@ echo 20000000 > /proc/sys/fs/nr_open || rc=$?
 [ "{resolver}" = "unbound" ] && {{
 # Update git repository for unbound.
 cd /root/unbound || rc=$?
-git pull || rc=$?
+repeat 3 git pull || rc=$?
 make -j8 || rc=$?
 }}
 
 [ "{resolver}" = "bind9" ] && {{
 # Install bind
 cd /root/
-[ -d "bind9" ] || git clone  https://gitlab.isc.org/isc-projects/bind9.git || rc=$?
+[ -d "bind9" ] || repeat 3 git clone  https://gitlab.isc.org/isc-projects/bind9.git || rc=$?
 cd bind9 || rc=$?
-git pull || rc=$?
+repeat 3 git pull || rc=$?
 git checkout {bind_version}
 # Perf tuning: https://kb.isc.org/docs/aa-01314
 # We can't tune the buffer size, it is unconditionally set to 16 MB by --with-tuning=large.
@@ -505,9 +507,9 @@ make -j32 || rc=$?
 # Install knot-resolver
 apt-get update
 cd /root/
-[ -d "knot-resolver" ] || git clone  https://gitlab.labs.nic.cz/knot/knot-resolver.git || rc=$?
+[ -d "knot-resolver" ] || repeat 5 git clone https://gitlab.labs.nic.cz/knot/knot-resolver.git || rc=$?
 cd knot-resolver || rc=$?
-git pull || rc=$?
+repeat 5 git pull || rc=$?
 git checkout {knot_version} || rc=$?
 # Tweak timers
 sed -i -e 's#net->tcp.in_idle_timeout = 10000;#net->tcp.in_idle_timeout = 3600000;#' daemon/network.c || rc=$?
@@ -522,9 +524,9 @@ make install || rc=$?
 # Install CPUNetLog
 apt-get --yes install python3 python3-psutil python3-netifaces
 cd /root/
-[ -d "CPUnetLOG" ] || git clone https://github.com/jonglezb/CPUnetLOG || rc=$?
+[ -d "CPUnetLOG" ] || repeat 3 git clone https://github.com/jonglezb/CPUnetLOG || rc=$?
 cd CPUnetLOG || rc=$?
-git pull || rc=$?
+repeat 3 git pull || rc=$?
 exit $rc
         """.format(vm_subnet=self.subnet,
                    resolver=self.args.resolver,
